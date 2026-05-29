@@ -239,6 +239,13 @@ export interface ModelInfo {
 	contextWindow?: number;
 	/** Provider has resolvable auth (api key set, oauth credentials present, or keyless). */
 	isAvailable: boolean;
+	/**
+	 * True when the provider exposes a browser-OAuth flow (subscription auth)
+	 * — e.g. `openai-codex` for ChatGPT Plus/Pro, `anthropic` w/ Claude Pro.
+	 * The picker badges these so users can tell subscription variants apart
+	 * from API-key variants of the same model name.
+	 */
+	isSubscription?: boolean;
 	/** True for the model active in the requesting session. */
 	isCurrent?: boolean;
 	/** Optional UX hint: input modalities the provider supports for this model. */

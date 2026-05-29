@@ -5,6 +5,7 @@ import {
 	settings as ompSettings,
 	type AgentSession,
 } from "@oh-my-pi/pi-coding-agent";
+import { getEnvApiKey, getOAuthProviders } from "@oh-my-pi/pi-ai";
 import { runExtensionCompact, runExtensionSetModel } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/compact-handler";
 import { getSessionSlashCommands } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/get-commands-handler";
 // `Model` is owned by `@oh-my-pi/pi-ai`, a transitive dep we don't bring in
@@ -33,7 +34,9 @@ import type {
 
 import { logger } from "../log.ts";
 import { getDeckModelRegistry } from "../auth-singleton.ts";
+import { looksLikePlaceholderKey } from "../credential-quality.ts";
 import { getEffectivePrelude } from "../orientation-store.ts";
+import { notificationService } from "../notifications/index.ts";
 import { ExtensionUIBridge } from "./ext-ui-bridge.ts";
 import { PlanModeBridge } from "./plan-mode-bridge.ts";
 import type {
@@ -458,6 +461,21 @@ export class InProcessAgentBridge implements AgentBridge {
 					}
 				}
 			}
+			// Issue #4 recovery hint: when the SDK surfaces an auth-shaped error
+			// (401 / "Incorrect API key") on a request to an API-key provider
+			// AND a subscription (OAuth) variant of the same model name exists
+			// AND is actually authenticated, fire a deck notification telling
+			// the operator to switch. Without this, the chat shows the raw 401
+			// inline and the operator has no idea why a fresh ChatGPT-Plus
+			// install rejected their first prompt. See issue #4.
+			if (type === "notice") {
+				const n = event as { level?: string; message?: string };
+				if (n.level === "error" && typeof n.message === "string" && looksLikeAuthError(n.message)) {
+					this.maybeSuggestSubscriptionFallback(session, n.message).catch((err) =>
+						log.warn("subscription-fallback hint failed", err),
+					);
+				}
+			}
 		});
 
 		this.active.set(sessionId, {
@@ -536,6 +554,46 @@ export class InProcessAgentBridge implements AgentBridge {
 		if (!entry) return "unknown";
 		this.bumpActivity(sessionId);
 		return entry.planBridge.respond(proposalId, response);
+	}
+
+	/**
+	 * Issue #4: emit a deck notification when an inline auth error on the
+	 * current model has a known recovery path (subscription provider with
+	 * the same model id is authenticated). Idempotent in the failure case —
+	 * if any precondition is missing we just bail silently. The notification
+	 * lands in the standard dropdown + optional OS toast so the operator
+	 * sees it even if the chat is scrolled past the inline error.
+	 */
+	private async maybeSuggestSubscriptionFallback(
+		session: AgentSession,
+		errorMessage: string,
+	): Promise<void> {
+		const snap = (session as unknown as { snapshot?: () => { model?: { provider?: string; id?: string } } }).snapshot?.();
+		const current = snap?.model;
+		if (!current?.provider || !current.id) return;
+		// Already on a subscription provider — nothing to suggest.
+		if (getSubscriptionProviders().has(current.provider)) return;
+		const registry = await this.ensureModelRegistry();
+		// Look for any subscription provider carrying the same model id that's
+		// authenticated (auth.db has OAuth credential).
+		const alternative = registry
+			.getAll()
+			.map((m) => m as unknown as SdkModel)
+			.find((m) => {
+				if (m.id !== current.id) return false;
+				const provider = String(m.provider);
+				if (!getSubscriptionProviders().has(provider)) return false;
+				const sdkModel = m as unknown as Parameters<ModelRegistry["isUsingOAuth"]>[0];
+				return registry.isUsingOAuth(sdkModel);
+			});
+		if (!alternative) return;
+		const altProvider = String(alternative.provider);
+		await notificationService.notify({
+			level: "warn",
+			title: `Authentication failed for ${current.provider}/${current.id}`,
+			body: `You appear to be authenticated for the same model under \`${altProvider}\` (subscription). Switch in the model picker to use your subscription instead.\n\nOriginal error: ${errorMessage.slice(0, 240)}`,
+			source: `bridge:auth-fallback`,
+		});
 	}
 }
 
@@ -1108,17 +1166,79 @@ function summarize(raw: any): SessionSummary {
 	};
 }
 
+/**
+ * Set of provider IDs that expose a browser-OAuth (subscription) flow,
+ * derived once from the SDK's `getOAuthProviders()`. Memoized: the SDK's
+ * list is static per process and we'd otherwise rebuild it on every model
+ * row. Used for two purposes by `modelInfoFromSdk`:
+ *   - Tag rows with `isSubscription: true` so the picker can badge them.
+ *   - Skip placeholder-key suppression — OAuth credentials live in
+ *     `auth.db` and may legitimately have a related env var unset or set
+ *     to something the API-key heuristics don't recognize as real.
+ */
+let subscriptionProvidersCache: Set<string> | undefined;
+function getSubscriptionProviders(): Set<string> {
+	if (!subscriptionProvidersCache) {
+		subscriptionProvidersCache = new Set(getOAuthProviders().map((p) => p.id));
+	}
+	return subscriptionProvidersCache;
+}
+
+/**
+ * Heuristic match for "this error is an auth failure on the API call we
+ * just made". Used to gate the issue-#4 subscription-fallback hint. Kept
+ * narrow on purpose: false positives mean we suggest a switch when none is
+ * needed, which is annoying; the worst case is silence on a less-common
+ * error shape, which is the existing behavior.
+ */
+function looksLikeAuthError(message: string): boolean {
+	const m = message.toLowerCase();
+	if (m.includes("401")) return true;
+	if (m.includes("incorrect api key")) return true;
+	if (m.includes("invalid api key")) return true;
+	if (m.includes("invalid_api_key")) return true;
+	if (m.includes("unauthorized")) return true;
+	if (m.includes("authentication failed")) return true;
+	if (m.includes("api key is required")) return true;
+	return false;
+}
+
 function modelInfoFromSdk(
 	model: SdkModel,
 	registry: ModelRegistry,
 	current: { provider: string; id: string } | undefined,
 ): ModelInfo {
+	const provider = String(model.provider);
+	const sdkModel = model as unknown as Parameters<ModelRegistry["hasConfiguredAuth"]>[0];
+	const hasAuth = registry.hasConfiguredAuth(sdkModel);
+	const usingOAuth = registry.isUsingOAuth(sdkModel);
+	const isSubscription = getSubscriptionProviders().has(provider);
+	// `isAvailable` semantics: would a call routed to this provider succeed?
+	//   - SDK reports no configured auth at all → false (keyless paths are
+	//     also flagged via hasConfiguredAuth, so this also covers them).
+	//   - SDK has an OAuth credential in auth.db (`isUsingOAuth`) → true,
+	//     regardless of what's in process.env.
+	//   - Otherwise an env-var API key is the credential source. Validate
+	//     that the value isn't a known placeholder (`sk-your-…here`, etc.)
+	//     — see credential-quality.ts and issue #4.
+	let isAvailable = hasAuth;
+	if (isAvailable && !usingOAuth) {
+		const envValue = getEnvApiKey(provider);
+		// Only suppress when the env-var IS the credential. An empty env var
+		// with `hasConfiguredAuth=true` means auth came from somewhere else
+		// (auth.db non-OAuth entry, keyless provider, foundry, etc.) — trust
+		// the SDK in that case.
+		if (envValue && looksLikePlaceholderKey(envValue)) {
+			isAvailable = false;
+		}
+	}
 	const info: ModelInfo = {
-		provider: String(model.provider),
+		provider,
 		id: model.id,
 		label: model.name || model.id,
-		isAvailable: registry.hasConfiguredAuth(model as unknown as Parameters<ModelRegistry["hasConfiguredAuth"]>[0]),
+		isAvailable,
 	};
+	if (isSubscription) info.isSubscription = true;
 	if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
 		info.contextWindow = model.contextWindow;
 	}

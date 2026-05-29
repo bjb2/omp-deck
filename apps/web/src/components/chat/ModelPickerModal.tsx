@@ -200,6 +200,11 @@ export function ModelPickerModal({ open, sessionId, onClose, onPicked }: Props) 
 														{model.label}
 													</span>
 													{model.isCurrent ? <Badge tone="accent">active</Badge> : null}
+													{model.isSubscription ? (
+														<Badge tone="success" title="Subscription provider — uses OAuth, no API key required">
+															subscription
+														</Badge>
+													) : null}
 													{!model.isAvailable ? <Badge tone="warn">no auth</Badge> : null}
 												</div>
 												<div className="mt-0.5 flex flex-wrap gap-2 text-2xs text-ink-3">
