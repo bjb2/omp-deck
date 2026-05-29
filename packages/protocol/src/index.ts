@@ -257,6 +257,48 @@ export interface ListModelsResponse {
 	active?: ModelRef;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Onboarding (first-run wizard)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Light projection of a provider credential — enough for the wizard to tick "done". */
+export interface OnboardingStateProvider {
+	id: string;
+	kind: "oauth" | "api-key";
+}
+
+/**
+ * Composite first-run state. `needsOnboarding` drives whether the web layer
+ * shows the wizard; the other fields let each step render a "you've already
+ * done this" tick when the user set things up out-of-band before the wizard
+ * was added or via the API directly.
+ */
+export interface OnboardingState {
+	needsOnboarding: boolean;
+	completedAt: string | null;
+	skipped: boolean;
+	version: number;
+	providers: OnboardingStateProvider[];
+	kbRoot: string;
+	kbExists: boolean;
+	startCommandExists: boolean;
+}
+
+/** Body of `POST /api/onboarding/complete`. `skipped` distinguishes "walked through" vs "X-ed out." */
+export interface CompleteOnboardingRequest {
+	skipped: boolean;
+}
+
+/** Body of `POST /api/onboarding/seed-kb-system`. Optional override; defaults to resolved kb root. */
+export interface SeedKbSystemRequest {
+	kbRoot?: string;
+}
+
+export interface SeedKbSystemResponse {
+	created: string[];
+	skipped: string[];
+}
+
 export interface SetSessionModelRequest {
 	model: ModelRef;
 }
