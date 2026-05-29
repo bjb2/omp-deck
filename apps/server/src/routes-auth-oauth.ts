@@ -56,6 +56,19 @@ function defer<T>(): Deferred<T> {
 
 const log = logger("oauth-routes");
 
+/**
+ * Maximum lifetime of a single OAuth flow before the deck force-cancels it.
+ * Issue #5: ollama's flow uses `onPrompt` for endpoint URL — if the user
+ * closes the modal without typing one, the SDK's login promise sits pending
+ * forever, the flow stays in the map, and every subsequent `start` 409s
+ * with "already in progress." The SDK's own DEFAULT_TIMEOUT (5 min) only
+ * fires on the loopback callback listener, not on prompt-based flows.
+ *
+ * 5 minutes matches the SDK's loopback timeout so the deck and SDK time
+ * out together for callback flows, and gives prompt flows a finite TTL.
+ */
+const OAUTH_FLOW_MAX_MS = 5 * 60_000;
+
 interface ActiveFlow {
 	flowId: string;
 	provider: string;
@@ -66,12 +79,52 @@ interface ActiveFlow {
 	consent?: { url: string; instructions?: string };
 	status: "awaiting-consent" | "consent-ready" | "exchanging" | "done" | "errored";
 	error?: string;
+	/** Wall-clock ms when the flow was registered. Used by the stale-flow eviction. */
+	startedAt: number;
+	/** Server-side max-lifetime timer; cleared on natural completion. */
+	expirationTimer: ReturnType<typeof setTimeout>;
 }
 
 // One in-flight flow per provider — second `start` 409s while the first is
 // alive. flowsById is the WS lookup index.
 const flows = new Map<string, ActiveFlow>();
 const flowsById = new Map<string, ActiveFlow>();
+
+/**
+ * Tear down a flow: cancel SDK abort, reject every pending deferred so the
+ * SDK's login promise settles, remove from both maps, clear the lifetime
+ * timer. Idempotent. Used by `/cancel`, by the expiration timer, and by
+ * stale-flow eviction on `/start`.
+ *
+ * The previous cancel handler only rejected `manualCode` — left `onPrompt`
+ * deferreds hanging, so cancelling an Ollama flow waiting on endpoint
+ * input left the SDK promise pending and the flow effectively un-cleaned.
+ */
+function abortFlow(flow: ActiveFlow, reason: string): void {
+	if (flow.ac.signal.aborted) return; // already torn down
+	try {
+		flow.ac.abort();
+	} catch {
+		/* abort() is well-behaved but be defensive */
+	}
+	clearTimeout(flow.expirationTimer);
+	const err = new Error(reason);
+	flow.manualCode.reject(err);
+	flow.consentReady.reject(err);
+	// Resolve outstanding prompt waits with an empty string — rejecting via
+	// throw would surface as an uncaught error in the SDK's onPrompt caller;
+	// empty answer at least lets the SDK proceed (and likely fail cleanly).
+	for (const resolve of flow.promptResolvers.values()) {
+		try {
+			resolve("");
+		} catch {
+			/* swallow — best-effort cleanup */
+		}
+	}
+	flow.promptResolvers.clear();
+	flows.delete(flow.provider);
+	flowsById.delete(flow.flowId);
+}
 
 function deriveAuthState(entry: unknown): { state: ProviderAuthState; count: number } {
 	if (!entry) return { state: "unconfigured", count: 0 };
@@ -123,19 +176,36 @@ export function buildAuthOAuthRouter(): Hono {
 
 	app.post("/:provider/start", async (c) => {
 		const provider = c.req.param("provider");
-		if (flows.has(provider)) {
-			return c.json(
-				{
-					error: "already-in-flight",
-					message: `An OAuth flow for ${provider} is already in progress. Cancel it first.`,
-				},
-				409,
-			);
+		const existing = flows.get(provider);
+		if (existing) {
+			// Stale-flow eviction (issue #5): if the held flow is past its max
+			// lifetime, the timeout handler should already have fired, but be
+			// defensive — evict it here too so a wedged flow doesn't block new
+			// attempts indefinitely.
+			const age = Date.now() - existing.startedAt;
+			if (age > OAUTH_FLOW_MAX_MS) {
+				log.warn(
+					`evicting stale ${provider} OAuth flow (age=${Math.round(age / 1000)}s) before starting a new one`,
+				);
+				abortFlow(existing, "stale-flow-evicted");
+			} else {
+				return c.json(
+					{
+						error: "already-in-flight",
+						message: `An OAuth flow for ${provider} is already in progress. Cancel it first.`,
+					},
+					409,
+				);
+			}
 		}
 
 		const auth = await getDeckAuthStorage();
 		const registry = await getDeckModelRegistry();
 		const flowId = randomUUID();
+		// expirationTimer is filled in below — assigned to a `noop` setTimeout
+		// at first so the field is non-undefined for `abortFlow`'s clearTimeout
+		// in the unlikely case start() throws between map insertion and timer
+		// scheduling.
 		const flow: ActiveFlow = {
 			flowId,
 			provider,
@@ -144,7 +214,23 @@ export function buildAuthOAuthRouter(): Hono {
 			manualCode: defer<string>(),
 			promptResolvers: new Map(),
 			status: "awaiting-consent",
+			startedAt: Date.now(),
+			expirationTimer: setTimeout(() => undefined, 0),
 		};
+		clearTimeout(flow.expirationTimer);
+		// Real lifetime timer: force-cancel if the flow hasn't naturally
+		// completed within OAUTH_FLOW_MAX_MS. Catches stuck onPrompt waits
+		// (issue #5: ollama endpoint prompt with closed modal).
+		flow.expirationTimer = setTimeout(() => {
+			log.warn(`OAuth flow for ${provider} exceeded ${OAUTH_FLOW_MAX_MS}ms; force-cancelling`);
+			abortFlow(flow, "timeout");
+			broadcastBus.broadcast({
+				type: "oauth_failed",
+				flowId,
+				provider,
+				message: `OAuth flow timed out after ${Math.round(OAUTH_FLOW_MAX_MS / 60_000)} minutes`,
+			});
+		}, OAUTH_FLOW_MAX_MS);
 		// Manual-code deferred may be rejected on cancel even when the SDK never
 		// awaited it (loopback won the race) — silence the unhandled rejection
 		// instead of letting Bun's postmortem surface it as a spurious server error.
@@ -215,6 +301,7 @@ export function buildAuthOAuthRouter(): Hono {
 				},
 			)
 			.finally(() => {
+				clearTimeout(flow.expirationTimer);
 				flows.delete(provider);
 				flowsById.delete(flowId);
 			});
@@ -238,10 +325,7 @@ export function buildAuthOAuthRouter(): Hono {
 		const provider = c.req.param("provider");
 		const flow = flows.get(provider);
 		if (!flow) return c.json({ ok: true, message: "no flow in progress" });
-		flow.ac.abort();
-		// Also reject the manual-code deferred so a hung "waiting for paste"
-		// promise resolves the SDK's race and lets `.finally()` cleanup run.
-		flow.manualCode.reject(new Error("cancelled"));
+		abortFlow(flow, "cancelled");
 		return c.json({ ok: true });
 	});
 
