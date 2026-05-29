@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Clock, MessagesSquare, Plus } from "lucide-react";
+import { ArrowRight, Clock, ClipboardList, MessagesSquare, Plus } from "lucide-react";
 import type { SessionSummary } from "@omp-deck/protocol";
 
 import { selectActiveSession, useStore } from "@/lib/store";
@@ -276,14 +276,18 @@ function WelcomeTaskTile() {
 	return (
 		<a
 			href="/tasks"
-			className="mb-4 flex items-center justify-between rounded border border-line bg-paper-2 p-3 text-sm text-ink hover:border-accent/40 hover:bg-accent/5"
+			className="mb-4 flex items-center justify-between gap-3 rounded border border-line bg-paper-2 p-3 text-sm text-ink hover:border-accent/40 hover:bg-accent/5"
 		>
-			<div>
-				<span className="text-accent">👋</span>{" "}
-				<span className="font-medium">T-1 Welcome to omp·deck</span> is waiting in
-				your kanban
+			<div className="flex items-center gap-2">
+				<ClipboardList className="h-4 w-4 shrink-0 text-accent" />
+				<span>
+					<span className="font-medium">T-1 Welcome to omp·deck</span> is waiting in
+					your kanban
+				</span>
 			</div>
-			<span className="text-2xs text-ink-3">Open Tasks →</span>
+			<span className="flex shrink-0 items-center gap-1 text-2xs text-ink-3">
+				Open Tasks <ArrowRight className="h-3 w-3" />
+			</span>
 		</a>
 	);
 }

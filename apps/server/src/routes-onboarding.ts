@@ -37,6 +37,44 @@ const log = logger("routes:onboarding");
  * something rather than a stream of 404s. Users can edit / replace at
  * will — we never overwrite a file the user has touched.
  */
+/**
+ * Top-level README written at the kb root by `seed-kb-system`. Same
+ * intent as the one rendered by `kb-service.initialize()` — drop a
+ * starter file so the first-time visitor sees what a kb article looks
+ * like (frontmatter shape + wikilink convention) and where to point new
+ * content. Inlined here so the wizard can scaffold at any path the user
+ * chooses, not just the server's resolved `OMP_DECK_KB_ROOT`.
+ */
+const KB_README_BODY = [
+	"---",
+	"type: knowledge",
+	"tags: [meta, readme]",
+	"---",
+	"",
+	"# Welcome to your KB",
+	"",
+	"This is a fresh knowledge base scaffolded by omp-deck onboarding. The deck",
+	"reads this folder as a Karpathy-style llm-wiki — hand-tended markdown with",
+	"YAML frontmatter and `[[wikilinks]]` between articles.",
+	"",
+	"## How it works",
+	"",
+	"- Each file is markdown with YAML frontmatter (`type`, `created`,",
+	"  `updated`, `tags` are parsed automatically).",
+	"- `[[some-file]]` resolves by filename stem. `[[dir/path]]` for explicit",
+	"  paths. `[[target|label]]` to rename the rendered text.",
+	"- The `/start` slash command reads `system/*.md` at session boot — drop",
+	"  notes about your voice, projects, and org system there.",
+	"",
+	"## What this is NOT",
+	"",
+	"omp's session memory (rolling summaries, vector store) is separate. This kb",
+	"is your long-term, hand-tended layer. They complement each other.",
+	"",
+	"Happy authoring.",
+	"",
+].join("\n");
+
 const KB_SYSTEM_STUBS: ReadonlyArray<{ name: string; body: string }> = [
 	{
 		name: "working-voice.md",
@@ -164,18 +202,34 @@ export function buildOnboardingRouter(): Hono {
 			return c.json({ error: String(err) }, 500);
 		}
 		const result: SeedKbSystemResponse = { created: [], skipped: [] };
+		// Top-level README — same intent as kb-service.initialize() but writes
+		// to whatever path the caller passes, not the server's resolved root.
+		// (Lets the wizard scaffold at a user-chosen location without first
+		// restarting the server to repoint OMP_DECK_KB_ROOT.)
+		const readmePath = path.join(kbRoot, "README.md");
+		if (!existsSync(readmePath)) {
+			try {
+				writeFileSync(readmePath, KB_README_BODY, "utf8");
+				result.created.push("README.md");
+			} catch (err) {
+				log.warn(`failed to write ${readmePath}`, err);
+				result.skipped.push("README.md");
+			}
+		} else {
+			result.skipped.push("README.md");
+		}
 		for (const stub of KB_SYSTEM_STUBS) {
 			const dest = path.join(systemDir, stub.name);
 			if (existsSync(dest)) {
-				result.skipped.push(stub.name);
+				result.skipped.push(`system/${stub.name}`);
 				continue;
 			}
 			try {
 				writeFileSync(dest, stub.body, "utf8");
-				result.created.push(stub.name);
+				result.created.push(`system/${stub.name}`);
 			} catch (err) {
 				log.warn(`failed to write ${dest}`, err);
-				result.skipped.push(stub.name);
+				result.skipped.push(`system/${stub.name}`);
 			}
 		}
 		return c.json(result);

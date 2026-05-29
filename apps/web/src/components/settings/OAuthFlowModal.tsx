@@ -175,7 +175,7 @@ export function OAuthFlowModal({ open, provider, providerName, onClose, onComple
 				{phase === "consent" && consentUrl ? (
 					<div className="flex flex-col gap-2">
 						<a href={consentUrl} target="_blank" rel="noopener noreferrer">
-							<Button className="w-full">Open consent screen in new tab</Button>
+							<Button variant="primary" className="w-full">Open consent screen in new tab</Button>
 						</a>
 						{instructions ? <p className="text-xs text-ink-3">{instructions}</p> : null}
 						<p className="text-2xs text-ink-4">

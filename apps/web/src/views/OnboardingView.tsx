@@ -16,7 +16,7 @@
  * wizard manually from Settings doesn't pester.
  */
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronRight, ExternalLink, Loader2, X } from "lucide-react";
+import { BookOpen, CheckCircle2, ChevronRight, ExternalLink, KeyRound, Loader2, Sparkles, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import type { OnboardingState } from "@omp-deck/protocol";
@@ -180,10 +180,19 @@ function Step1Welcome({ onNext }: { onNext: () => void }) {
 			</div>
 			<div className="rounded border border-line bg-paper-2 p-4 text-sm text-ink-2">
 				<p>The next few steps will:</p>
-				<ul className="mt-2 space-y-1 text-xs text-ink-3">
-					<li>📚 Scaffold a knowledge base the agent can read from</li>
-					<li>🔑 Connect a model provider so chat actually works</li>
-					<li>👋 Optionally enable an auto-greeting on every new session</li>
+				<ul className="mt-2 space-y-1.5 text-xs text-ink-3">
+					<li className="flex items-start gap-2">
+						<BookOpen className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" />
+						<span>Scaffold a knowledge base the agent can read from</span>
+					</li>
+					<li className="flex items-start gap-2">
+						<KeyRound className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" />
+						<span>Connect a model provider so chat actually works</span>
+					</li>
+					<li className="flex items-start gap-2">
+						<Sparkles className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" />
+						<span>Optionally enable an auto-greeting on every new session</span>
+					</li>
 				</ul>
 				<p className="mt-3 text-2xs text-ink-3">
 					Each step is skippable — you can re-run this wizard any time from
@@ -213,16 +222,28 @@ function Step2Kb({
 	const [busy, setBusy] = useState(false);
 	const [seeded, setSeeded] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [pathValue, setPathValue] = useState(state.kbRoot);
+	const [editing, setEditing] = useState(false);
 
 	const alreadyExists = state.kbExists;
+	const pathChanged = pathValue.trim() !== state.kbRoot;
 
 	async function scaffold(): Promise<void> {
 		setBusy(true);
 		setError(null);
 		try {
-			// POST /api/kb/init creates the dir + README; then seed system stubs.
-			await fetch("/api/kb/init", { method: "POST" });
-			await onboardingApi.seedKbSystem();
+			const target = pathValue.trim() || state.kbRoot;
+			// Seed README + system/ stubs at the user-provided path. The endpoint
+			// is idempotent on existing files. We deliberately don't call
+			// /api/kb/init because that only writes to the SERVER's resolved
+			// `OMP_DECK_KB_ROOT` — ignoring whatever the user just typed.
+			await onboardingApi.seedKbSystem(target);
+			// Persist the choice so the next server restart picks it up. Without
+			// this the kb watcher / indexer keeps pointing at the old root and
+			// the /kb tab looks empty until manual env edit.
+			if (pathChanged) {
+				await settingsApi.patchEnv({ OMP_DECK_KB_ROOT: target });
+			}
 			setSeeded(true);
 			await onRefresh();
 		} catch (err) {
@@ -245,11 +266,37 @@ function Step2Kb({
 
 			<div className="rounded border border-line bg-paper-2 p-4">
 				<div className="meta mb-1.5 text-ink-3">Location</div>
-				<div className="font-mono text-sm text-ink">{state.kbRoot}</div>
+				{editing ? (
+					<input
+						type="text"
+						value={pathValue}
+						onChange={(e) => setPathValue(e.target.value)}
+						placeholder={state.kbRoot}
+						className="field h-8 w-full px-2 font-mono text-xs"
+						spellCheck={false}
+						autoFocus
+					/>
+				) : (
+					<div className="flex items-center justify-between gap-2">
+						<div className="break-all font-mono text-sm text-ink">{pathValue || state.kbRoot}</div>
+						<button
+							type="button"
+							onClick={() => setEditing(true)}
+							className="shrink-0 text-2xs text-ink-3 hover:text-ink"
+						>
+							Change…
+						</button>
+					</div>
+				)}
 				<div className="mt-2 text-2xs text-ink-3">
-					{alreadyExists
+					{alreadyExists && !pathChanged
 						? "Already exists — scaffold will add starter files only if missing."
 						: "Will be created with a README and system/ stubs the agent reads at session start."}
+					{pathChanged ? (
+						<span className="ml-1 text-warn">
+							Path differs from server's resolved root; takes full effect after deck restart.
+						</span>
+					) : null}
 				</div>
 			</div>
 
@@ -477,7 +524,7 @@ function Step4AutoStart({
 		setError(null);
 		try {
 			// Write start.md
-			const res = await fetch("/api/orientation/start-command", {
+			const res = await fetch("/api/orientation/start", {
 				method: "PUT",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
@@ -555,19 +602,21 @@ function Step4AutoStart({
 // ─── Step 5: Done ───────────────────────────────────────────────────────────
 
 function Step5Done({ onFinish }: { onFinish: () => void }) {
-	const [creating, setCreating] = useState(false);
 	const createSession = useStore((s) => s.createSession);
 	const defaultCwd = useStore((s) => s.defaultCwd);
 
-	async function openChat(): Promise<void> {
-		setCreating(true);
-		try {
-			await createSession({ cwd: defaultCwd });
-		} catch {
-			/* swallow — finish() navigates anyway */
-		} finally {
-			onFinish();
+	function openChat(): void {
+		// Fire-and-forget session creation; navigation happens immediately so
+		// the user is never blocked waiting on the SDK. If session creation
+		// fails (e.g. no model picked yet, no auth), ChatView's SessionPicker
+		// handles the empty state cleanly — the user has a path forward
+		// either way.
+		if (defaultCwd) {
+			void createSession({ cwd: defaultCwd }).catch(() => {
+				/* SessionPicker on the chat view will let the user retry */
+			});
 		}
+		onFinish();
 	}
 
 	return (
@@ -592,8 +641,8 @@ function Step5Done({ onFinish }: { onFinish: () => void }) {
 				</ul>
 			</div>
 			<div className="flex justify-end">
-				<Button onClick={() => void openChat()} disabled={creating}>
-					{creating ? "Opening chat…" : "Open chat"} <ChevronRight className="ml-1 h-4 w-4" />
+				<Button onClick={openChat}>
+					Open chat <ChevronRight className="ml-1 h-4 w-4" />
 				</Button>
 			</div>
 		</div>
