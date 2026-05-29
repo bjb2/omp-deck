@@ -5,7 +5,7 @@ import {
 	settings as ompSettings,
 	type AgentSession,
 } from "@oh-my-pi/pi-coding-agent";
-import { getEnvApiKey, getOAuthProviders } from "@oh-my-pi/pi-ai";
+import { getEnvApiKey } from "@oh-my-pi/pi-ai";
 import { runExtensionCompact, runExtensionSetModel } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/compact-handler";
 import { getSessionSlashCommands } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/get-commands-handler";
 // `Model` is owned by `@oh-my-pi/pi-ai`, a transitive dep we don't bring in
@@ -1167,21 +1167,44 @@ function summarize(raw: any): SessionSummary {
 }
 
 /**
- * Set of provider IDs that expose a browser-OAuth (subscription) flow,
- * derived once from the SDK's `getOAuthProviders()`. Memoized: the SDK's
- * list is static per process and we'd otherwise rebuild it on every model
- * row. Used for two purposes by `modelInfoFromSdk`:
+ * Provider IDs that represent a true consumer subscription — the user
+ * paid a monthly fee (Claude Pro/Max, ChatGPT Plus/Pro, Copilot, Cursor)
+ * or a coding plan (Z.AI GLM, Alibaba, MiniMax, Kimi). The picker badges
+ * these so users can tell subscription variants apart from API-key
+ * variants of the same model name (the actual bug from issue #4).
+ *
+ * Intentionally an explicit allowlist, not `getOAuthProviders()` from the
+ * SDK. The SDK's "OAuth providers" is a broader category that also
+ * includes local runtimes (Ollama, LM Studio, vLLM), gateway services
+ * (LiteLLM, Kilo, Cloudflare AI Gateway), and pure-API-tier providers
+ * (Cerebras, Fireworks, Together, HuggingFace) — none of which are
+ * "subscriptions" in the user-facing sense. Calling Ollama a
+ * "subscription" in the model picker is actively misleading.
+ *
+ * Used for two purposes by `modelInfoFromSdk` and the issue-#4 hint:
  *   - Tag rows with `isSubscription: true` so the picker can badge them.
- *   - Skip placeholder-key suppression — OAuth credentials live in
- *     `auth.db` and may legitimately have a related env var unset or set
- *     to something the API-key heuristics don't recognize as real.
+ *   - Pick recovery targets for the 401-fallback notification.
+ *
+ * When the SDK adds a new subscription-style provider, add it here.
+ * False negatives (missing a real subscription) are graceful — the user
+ * just doesn't get the badge. False positives (claiming Ollama is a
+ * subscription) are confusing and that's what we're fixing here.
  */
-let subscriptionProvidersCache: Set<string> | undefined;
-function getSubscriptionProviders(): Set<string> {
-	if (!subscriptionProvidersCache) {
-		subscriptionProvidersCache = new Set(getOAuthProviders().map((p) => p.id));
-	}
-	return subscriptionProvidersCache;
+const SUBSCRIPTION_PROVIDER_IDS: ReadonlySet<string> = new Set([
+	"anthropic", // Claude Pro/Max — competes with anthropic API key for Claude models
+	"openai-codex", // ChatGPT Plus/Pro — competes with openai API key for gpt-5/etc.
+	"github-copilot", // Copilot subscription
+	"cursor", // Cursor IDE subscription — surfaces Claude/GPT models
+	"perplexity", // Perplexity Pro/Max — competes with perplexity API key
+	"alibaba-coding-plan", // Alibaba Coding Plan
+	"zai", // Z.AI GLM Coding Plan
+	"minimax-code", // MiniMax Coding Plan (International)
+	"minimax-code-cn", // MiniMax Coding Plan (China)
+	"kimi-code", // Kimi Code
+	"google-antigravity", // Google Antigravity (preview)
+]);
+function getSubscriptionProviders(): ReadonlySet<string> {
+	return SUBSCRIPTION_PROVIDER_IDS;
 }
 
 /**
