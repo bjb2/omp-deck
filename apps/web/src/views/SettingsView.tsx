@@ -26,6 +26,7 @@ import { authApi } from "@/lib/auth-api";
 import { type AuthError, type AuthStatus, deckAuthApi } from "@/lib/deck-auth-api";
 import { playNotificationTone } from "@/lib/audio";
 import { useNotificationPermission } from "@/lib/notifications";
+import { useInstallPrompt, usePushSubscription } from "@/lib/pwa";
 import { useStore, type NotificationItem } from "@/lib/store";
 import { THEMES, useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -758,6 +759,8 @@ function NotificationsSection() {
 				</p>
 			</div>
 
+			<MobileAppCard />
+
 			<PermissionCard
 				permission={permission}
 				onRequest={() => void requestPermission()}
@@ -790,6 +793,100 @@ function NotificationsSection() {
 				items={recent}
 				onDismiss={(id) => dismissNotification(id)}
 			/>
+		</div>
+	);
+}
+
+/**
+ * "Code from your phone." Two independent capabilities, one card: installing
+ * the deck as a standalone app (no browser chrome, its own icon, launches
+ * full-screen) and push notifications that reach it even when it's closed
+ * or backgrounded — the thing a foreground-only browser Notification can't
+ * do, which is the whole point of pairing the two here rather than putting
+ * push in a generic "notifications" list.
+ */
+function MobileAppCard() {
+	const install = useInstallPrompt();
+	const push = usePushSubscription();
+	const [installResult, setInstallResult] = useState<string | null>(null);
+	const [testResult, setTestResult] = useState<string | null>(null);
+
+	async function handleInstall(): Promise<void> {
+		const outcome = await install.promptInstall();
+		if (outcome === "accepted") setInstallResult("Installed. Look for omp-deck on your home screen or app list.");
+		else if (outcome === "dismissed") setInstallResult(null);
+	}
+
+	async function handleTest(): Promise<void> {
+		try {
+			setTestResult(await push.sendTest());
+		} catch (err) {
+			setTestResult(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	return (
+		<div className="row space-y-3 pb-4">
+			<div>
+				<div className="text-sm font-medium">Mobile & push</div>
+				<p className="mt-0.5 text-xs text-ink-3">
+					Install omp-deck as an app and get pushed when a session needs you — even with the tab closed.
+				</p>
+			</div>
+
+			<div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper-2 px-3 py-2.5">
+				<div className="min-w-0">
+					<div className="text-xs font-medium text-ink">Install as app</div>
+					<div className="mt-0.5 text-2xs text-ink-3">
+						{install.installed
+							? "Already running as an installed app."
+							: install.needsManualIosInstructions
+								? "Safari: Share → Add to Home Screen."
+								: install.available
+									? "Adds an icon, launches full-screen, no browser chrome."
+									: "Not offered by this browser yet — visit again after using the app a bit, or check for a browser menu install option."}
+					</div>
+					{installResult ? <div className="mt-1 text-2xs text-success">{installResult}</div> : null}
+				</div>
+				{!install.installed && install.available ? (
+					<Button variant="primary" size="sm" onClick={() => void handleInstall()}>
+						Install
+					</Button>
+				) : null}
+			</div>
+
+			<div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper-2 px-3 py-2.5">
+				<div className="min-w-0">
+					<div className="text-xs font-medium text-ink">Push notifications</div>
+					<div className="mt-0.5 text-2xs text-ink-3">
+						{push.state === "unsupported"
+							? "Not supported by this browser."
+							: push.state === "subscribed"
+								? "Enabled on this device."
+								: "Reach this device even when the tab is closed."}
+					</div>
+					{push.error ? <div className="mt-1 text-2xs text-danger">{push.error}</div> : null}
+					{testResult ? <div className="mt-1 text-2xs text-ink-3">{testResult}</div> : null}
+				</div>
+				{push.state !== "unsupported" ? (
+					<div className="flex shrink-0 gap-1.5">
+						{push.state === "subscribed" ? (
+							<>
+								<Button variant="ghost" size="sm" disabled={push.busy} onClick={() => void handleTest()}>
+									Test
+								</Button>
+								<Button variant="outline" size="sm" disabled={push.busy} onClick={() => void push.unsubscribe()}>
+									Disable
+								</Button>
+							</>
+						) : (
+							<Button variant="primary" size="sm" disabled={push.busy} onClick={() => void push.subscribe()}>
+								Enable
+							</Button>
+						)}
+					</div>
+				) : null}
+			</div>
 		</div>
 	);
 }

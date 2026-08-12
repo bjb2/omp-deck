@@ -27,6 +27,7 @@ function AuthedApp() {
 	const bootstrap = useStore((s) => s.bootstrap);
 	useNotificationBridge();
 	useGlobalAbortShortcut();
+	useServiceWorkerNavigation();
 
 	useEffect(() => {
 		void bootstrap();
@@ -54,6 +55,28 @@ function AuthedApp() {
  * composer textarea is the most likely place to be when you decide to
  * stop.
  */
+/**
+ * Tapping a push notification on a closed/backgrounded tab has the service
+ * worker focus (or open) a client and postMessage the deep link — see
+ * public/sw.js's `notificationclick` handler. A full navigation rather than
+ * a router push: the message can arrive before the router has mounted (a
+ * cold-started PWA opening from a notification tap), so there's no
+ * `navigate()` to reliably call yet.
+ */
+function useServiceWorkerNavigation(): void {
+	useEffect(() => {
+		if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+		function onMessage(event: MessageEvent): void {
+			const data = event.data as { type?: string; url?: string } | undefined;
+			if (data?.type === "notification-click" && typeof data.url === "string") {
+				window.location.assign(data.url);
+			}
+		}
+		navigator.serviceWorker.addEventListener("message", onMessage);
+		return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+	}, []);
+}
+
 function useGlobalAbortShortcut(): void {
 	const abort = useStore((s) => s.abort);
 	const status = useStore((s) => selectActiveSession(s)?.status);

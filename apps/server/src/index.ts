@@ -42,6 +42,7 @@ import {
 	BrowserNotificationChannel,
 	notificationService,
 } from "./notifications/index.ts";
+import { WebPushChannel } from "./notifications/channels/web-push.ts";
 import type { RestartServerResponse } from "@omp-deck/protocol";
 
 const log = logger("server");
@@ -99,10 +100,13 @@ async function main(): Promise<void> {
 	await installStarterSkills();
 	await installStarterExtensions();
 
-	// Register the default browser notification channel. It broadcasts a
-	// `notification` ServerFrame to every connected web client. Future channels
-	// (telegram, email, push) self-register here without engine changes.
+	// Register notification channels. Browser broadcasts to whatever's
+	// connected right now over the live WebSocket; web-push reaches a closed
+	// tab or backgrounded phone via the service worker — the case the mobile
+	// PWA install exists to serve, and the one the WS channel structurally
+	// cannot cover. Both self-register here without engine changes.
 	notificationService.register(new BrowserNotificationChannel());
+	notificationService.register(new WebPushChannel());
 
 
 	const bridge = new InProcessAgentBridge({

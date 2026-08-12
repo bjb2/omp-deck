@@ -39,6 +39,7 @@ import { buildFilesRouter } from "./routes-files.ts";
 import { buildGitRouter } from "./routes-git.ts";
 import { buildGitHubRouter } from "./routes-github.ts";
 import { buildAgentConfigRouter } from "./routes-agent-config.ts";
+import { buildPushRouter } from "./routes-push.ts";
 import type { RoutinesRunner } from "./routines-runner.ts";
 import type { BridgeSupervisor } from "./bridge-supervisor.ts";
 import type { MarketplaceService } from "./marketplace-service.ts";
@@ -258,6 +259,7 @@ export function buildRouter(
 	app.route("/", buildGitRouter());
 	app.route("/", buildGitHubRouter());
 	app.route("/", buildAgentConfigRouter({ restartServer: opts.restartServer }));
+	app.route("/", buildPushRouter());
 	app.route("/auth/oauth", buildAuthOAuthRouter());
 	// Deck sign-in. Mounted after /auth/oauth so the more specific provider
 	// routes win; this router only declares leaf paths (/login, /session, …)
