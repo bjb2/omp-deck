@@ -24,23 +24,18 @@
 		<script>
 			// Apply the theme BEFORE React mounts so there is no flash of the
 			// wrong palette. Kept tiny on purpose; mirrored by `apps/web/src/lib/theme.ts`.
+			//
+			// Aurora is the deck's actual design, not merely an available option, so
+			// it is the default for any visitor with no saved choice — independent of
+			// OS color-scheme preference. A saved choice (including an explicit pick
+			// of Paper) always wins.
 			(function () {
 				var THEMES = ["paper", "slate", "horizon", "aurora"];
 				var stored = null;
 				try {
 					stored = localStorage.getItem("omp-deck:theme");
 				} catch (_) {}
-				var theme;
-				if (stored && THEMES.indexOf(stored) !== -1) {
-					theme = stored;
-				} else if (
-					window.matchMedia &&
-					window.matchMedia("(prefers-color-scheme: dark)").matches
-				) {
-					theme = "aurora";
-				} else {
-					theme = "paper";
-				}
+				var theme = stored && THEMES.indexOf(stored) !== -1 ? stored : "aurora";
 				document.documentElement.setAttribute("data-theme", theme);
 				var meta = document.querySelector('meta[name="theme-color"]');
 				var metaColors = { paper: "#f7f4ee", slate: "#0f131a", horizon: "#1c1e26", aurora: "#0a0b10" };
