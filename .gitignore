@@ -58,3 +58,11 @@ apps/server/src/templates/paper-trading-*.yaml
 # Local convenience scripts. Start-OMP-Deck.cmd ships with the template;
 # personal helpers like Restart-OMP-Deck.cmd stay out of the public repo.
 Restart-OMP-Deck.cmd
+
+# Agent runtime state. `agent-defaults/` holds the seed for the agent directory
+# and is public; these are the files that must never join it — the SDK auth
+# database (OAuth refresh tokens), model/QA caches, and any rendered config that
+# had its ${VAR} placeholders filled in with real credentials.
+agent-defaults/**/*.db
+agent-defaults/mcp.json
+agent-defaults/models.yml

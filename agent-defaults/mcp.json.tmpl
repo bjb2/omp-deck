@@ -1,0 +1,92 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "timeout": 60000,
+      "enabled": true
+    },
+    "openship": {
+      "url": "https://ship.v244.net/api/proxy/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_OPENSHIP_TOKEN}"
+      }
+    },
+    "github": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "timeout": 120000
+    },
+    "parallel": {
+      "type": "http",
+      "url": "https://search.parallel.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_PARALLEL_TOKEN}"
+      },
+      "timeout": 60000,
+      "enabled": true
+    },
+    "grep": {
+      "type": "http",
+      "url": "https://mcp.grep.app",
+      "timeout": 60000,
+      "enabled": true
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "timeout": 60000
+    },
+    "exa": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "exa-mcp-server"
+      ],
+      "env": {
+        "EXA_API_KEY": "${EXA_API_KEY}"
+      },
+      "timeout": 60000
+    },
+    "sequentialthinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "timeout": 60000
+    },
+    "tavily": {
+      "type": "http",
+      "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}",
+      "timeout": 60000
+    }
+  },
+  "disabledServers": [
+    "blinko_pylone",
+    "blinko_v244",
+    "dokploy-mcp",
+    "ecc:github",
+    "ecc:memory",
+    "headroom",
+    "serena",
+    "telegram-kaka",
+    "telegram-magical",
+    "telegram-osairon",
+    "waha"
+  ]
+}

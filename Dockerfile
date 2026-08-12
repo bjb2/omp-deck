@@ -63,6 +63,18 @@ COPY apps/server apps/server
 # Built web assets.
 COPY --from=web-build /app/apps/web/dist /app/apps/web/dist
 
+# Agent defaults + the entrypoint that seeds them.
+#
+# A container starts with an empty agent directory, so without this a rebuilt
+# image keeps the deck and loses everything that makes the agent yours —
+# subagents, skills, extensions, rules, MCP servers, model routing. The seed
+# script copies these into OMP_AGENT_DIR (never overwriting what's already in
+# the volume) and renders the *.tmpl configs from environment variables, which
+# is how credentials stay out of the image and out of git.
+COPY agent-defaults /app/agent-defaults
+COPY scripts/seed-agent-dir.sh /app/scripts/seed-agent-dir.sh
+RUN chmod +x /app/scripts/seed-agent-dir.sh
+
 # Server resolves OMP_DECK_WEB_DIST or auto-discovers ../web/dist relative to
 # its cwd. Pin it explicitly here.
 ENV OMP_DECK_WEB_DIST=/app/apps/web/dist \
@@ -72,4 +84,8 @@ ENV OMP_DECK_WEB_DIST=/app/apps/web/dist \
 
 WORKDIR /app/apps/server
 EXPOSE 8787
+
+# Seed the agent directory, then exec the server so it keeps PID 1 and still
+# receives SIGTERM directly (the compose file relies on that for clean shutdown).
+ENTRYPOINT ["/bin/sh", "-c", "/app/scripts/seed-agent-dir.sh; exec \"$@\"", "--"]
 CMD ["bun", "src/index.ts"]
