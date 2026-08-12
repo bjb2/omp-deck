@@ -4,8 +4,26 @@ import { selectActiveSession, useStore } from "./lib/store";
 import { useNotificationBridge } from "./lib/notifications";
 import { NotificationToast } from "./components/NotificationToast";
 import { NotificationPermissionBanner } from "./components/NotificationPermissionBanner";
+import { AuthGate } from "./components/auth/AuthGate";
 
 export function App() {
+	return (
+		<AuthGate>
+			<AuthedApp />
+		</AuthGate>
+	);
+}
+
+/**
+ * The deck proper.
+ *
+ * Kept separate from `App` so that none of it — least of all `bootstrap()`,
+ * which opens the WebSocket and fetches sessions and workspaces — mounts until
+ * the server confirms the visitor is allowed in. Rendering this behind the gate
+ * rather than gating inside the router is what keeps a signed-out visitor from
+ * firing a burst of requests that can only 401.
+ */
+function AuthedApp() {
 	const bootstrap = useStore((s) => s.bootstrap);
 	useNotificationBridge();
 	useGlobalAbortShortcut();

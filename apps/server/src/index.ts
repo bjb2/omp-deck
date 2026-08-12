@@ -17,6 +17,15 @@ import { logger } from "./log.ts";
 import { resolveBunExecutable } from "./runtime-bun.ts";
 import { primeUpdateCheckOnBoot } from "./update-check.ts";
 import { buildRouter } from "./routes.ts";
+import { initAuthConfig } from "./auth/config.ts";
+import { bootstrapAuth } from "./auth/bootstrap.ts";
+import {
+	isAllowedOrigin,
+	isPublicApiPath,
+	needsFirstRunSetup,
+	resolvePrincipal,
+	unauthorizedResponse,
+} from "./auth/guard.ts";
 import { WsHub, type ConnectionData } from "./ws.ts";
 import { MarketplaceService } from "./marketplace-service.ts";
 import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
@@ -100,6 +109,13 @@ async function main(): Promise<void> {
 		idleTimeoutMs: config.idleTimeoutMs,
 		autoStartCommand: config.autoStartCommand,
 	});
+	// Authentication is resolved against the bind host: a loopback-only dev
+	// server stays frictionless, while any non-loopback bind — which is every
+	// self-hosted deployment — requires a real account. Must run after openDb,
+	// since the bootstrap account and session table live in that database.
+	const authConfig = initAuthConfig(config.host);
+	await bootstrapAuth(authConfig, config.host);
+
 	const routinesRunner = new RoutinesRunner();
 	routinesRunner.start();
 	let server: Server<ConnectionData>;
@@ -127,6 +143,44 @@ async function main(): Promise<void> {
 		fetch(req, srv) {
 			const url = new URL(req.url);
 
+			// ── Authentication gate ──────────────────────────────────────
+			//
+			// Everything that carries privilege converges here: the API, the
+			// WebSocket that drives agent sessions, and the uploads reader.
+			// Gating inside the Hono router alone would leave /ws and
+			// /uploads open, so the check lives at the one point all three
+			// share.
+			//
+			// Static assets stay ungated on purpose — the SPA bundle holds
+			// no secrets, and serving it anonymously is what allows a login
+			// screen to render at all.
+			const privileged =
+				url.pathname === "/ws" ||
+				url.pathname.startsWith("/api/") ||
+				url.pathname.startsWith("/uploads/") ||
+				// Completing a provider sign-in writes credentials into the agent's
+				// auth store, so the landing alias is gated like the API it proxies.
+				url.pathname === "/oauth/callback";
+
+			if (authConfig.enabled && privileged && !isPublicApiPath(url.pathname)) {
+				if (!isAllowedOrigin(req, authConfig, config.publicUrl)) {
+					return new Response(
+						JSON.stringify({ error: "forbidden", message: "Cross-origin request rejected." }),
+						{ status: 403, headers: { "content-type": "application/json; charset=utf-8" } },
+					);
+				}
+				if (!resolvePrincipal(req, authConfig)) {
+					// 401 on the socket too. A browser can't read the body of a
+					// failed upgrade, but the status is what the client's retry
+					// logic needs to tell "signed out" from "server down".
+					return unauthorizedResponse(
+						needsFirstRunSetup()
+							? "This deck has no account yet. Open it in a browser to finish setup."
+							: "Sign in to use the deck.",
+					);
+				}
+			}
+
 			if (url.pathname === "/ws") {
 				const data = ws.createConnectionData();
 				const upgraded = srv.upgrade(req, { data });
@@ -138,6 +192,17 @@ async function main(): Promise<void> {
 				const trimmed = new URL(req.url);
 				trimmed.pathname = url.pathname.slice(4) || "/";
 				return router.fetch(new Request(trimmed.toString(), req));
+			}
+
+			// Short alias for the OAuth landing route. A provider redirect that
+			// died on the browser's own `localhost:54545` can be completed by
+			// editing just the host of that URL, so the path after the host has
+			// to match what the provider produced: `/callback?code=…`. Nesting it
+			// under `/api/auth/oauth/` would mean retyping the path too.
+			if (url.pathname === "/oauth/callback") {
+				const rewritten = new URL(req.url);
+				rewritten.pathname = "/auth/oauth/callback";
+				return router.fetch(new Request(rewritten.toString(), req));
 			}
 
 			// Pasted-image uploads. The uploads route returns URLs rooted at

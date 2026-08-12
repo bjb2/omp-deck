@@ -17,7 +17,7 @@ class TelegramBridge {
 
 	constructor(private readonly config: TelegramBridgeConfig) {
 		this.telegram = new TelegramApi(config.botToken);
-		this.deck = new DeckClient(config.deckApiBase, config.deckWsUrl);
+		this.deck = new DeckClient(config.deckApiBase, config.deckWsUrl, config.deckApiToken);
 		this.store = new TelegramBridgeStore(config.dbPath);
 	}
 

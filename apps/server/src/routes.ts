@@ -32,6 +32,8 @@ import { buildKbRouter } from "./routes-kb.ts";
 import { buildUploadsRouter } from "./routes-uploads.ts";
 import { buildOrientationRouter } from "./routes-orientation.ts";
 import { buildAuthOAuthRouter } from "./routes-auth-oauth.ts";
+import { buildAuthRouter } from "./routes-auth.ts";
+import { getAuthConfig } from "./auth/config.ts";
 import { buildOnboardingRouter } from "./routes-onboarding.ts";
 import type { RoutinesRunner } from "./routines-runner.ts";
 import type { BridgeSupervisor } from "./bridge-supervisor.ts";
@@ -249,6 +251,10 @@ export function buildRouter(
 	app.route("/", buildSkillsRouter(skills));
 	app.route("/", buildKbRouter(kb));
 	app.route("/auth/oauth", buildAuthOAuthRouter());
+	// Deck sign-in. Mounted after /auth/oauth so the more specific provider
+	// routes win; this router only declares leaf paths (/login, /session, …)
+	// so the two never overlap.
+	app.route("/auth", buildAuthRouter(getAuthConfig(), () => config.publicUrl));
 	app.route("/onboarding", buildOnboardingRouter());
 
 	return app;

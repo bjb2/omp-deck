@@ -4,16 +4,22 @@
  *
  *   awaiting-consent → consent-ready → (progress…|prompt?) → complete | failed
  *
- * The "Paste redirect URL or code" textbox is ALWAYS visible (collapsed by
- * default) because the SDK races `onManualCodeInput` against the loopback
- * listener. Mobile / Tailscale users can never reach the deck host's
- * 54545/1455 ports, so manual paste is the only path that works for them —
- * see docs/oauth-deck-sdk-findings.md.
+ * The shape of this modal is decided by one question: can the browser reach the
+ * loopback listener the SDK opened?
+ *
+ * On a laptop deck it can, the redirect completes on its own, and the manual
+ * paste box is a folded-away fallback. On a self-hosted deck it cannot — the
+ * provider's redirect URI is pinned to `localhost:54545` by the provider's own
+ * app registration, so it resolves against the *user's* machine and dies there.
+ * The listener can never win that race, which makes bringing the code back by
+ * hand the only route that finishes, so it is shown expanded with the reason
+ * spelled out. See docs/oauth-deck-sdk-findings.md.
  */
 import { useEffect, useMemo, useState } from "react";
 import type { ServerFrame } from "@omp-deck/protocol";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { CopyButton } from "@/lib/CopyButton";
 import { authApi } from "@/lib/auth-api";
 import { useStore } from "@/lib/store";
 
@@ -46,8 +52,44 @@ export function OAuthFlowModal({ open, provider, providerName, onClose, onComple
 	const [manualCode, setManualCode] = useState("");
 	const [submittingManual, setSubmittingManual] = useState(false);
 	const [showManual, setShowManual] = useState(false);
+	const [publicUrl, setPublicUrl] = useState<string | null>(null);
 
 	const title = useMemo(() => `Sign in to ${providerName ?? provider ?? "provider"}`, [providerName, provider]);
+
+	/**
+	 * Is the deck somewhere the browser's own loopback isn't?
+	 *
+	 * A configured public URL says so outright. Failing that, the page's own
+	 * hostname is the tell: if the deck is being viewed at anything other than
+	 * localhost, the SDK's listener is on a different machine than this browser.
+	 */
+	const isRemoteDeck = useMemo(() => {
+		if (publicUrl) return true;
+		const host = window.location.hostname;
+		return host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]" && host !== "::1";
+	}, [publicUrl]);
+
+	/** What the user should rewrite the dead redirect URL's prefix to. */
+	const callbackBase = useMemo(
+		() => `${(publicUrl ?? window.location.origin).replace(/\/+$/, "")}/oauth`,
+		[publicUrl],
+	);
+
+	// The providers list carries the server's configured public URL; fetch it
+	// once per opened flow so the copy above can be specific instead of hedging.
+	useEffect(() => {
+		if (!open) return;
+		let cancelled = false;
+		void authApi
+			.listProviders()
+			.then((resp) => {
+				if (!cancelled) setPublicUrl((resp as { publicUrl?: string | null }).publicUrl ?? null);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [open]);
 
 	// Kick off the flow when the modal opens.
 	useEffect(() => {
@@ -163,8 +205,9 @@ export function OAuthFlowModal({ open, provider, providerName, onClose, onComple
 				<div>
 					<h2 className="text-lg font-semibold text-ink">{title}</h2>
 					<p className="mt-1 text-xs text-ink-3">
-						The deck talks to the omp SDK; the SDK opens a local callback listener and the
-						provider's consent flow redirects to it. Credentials never leave this machine.
+						{isRemoteDeck
+							? "This deck runs on a server, so the provider's redirect lands on your own computer instead of reaching it. Approve the consent screen, then bring the code back here — the two routes below both do that. Credentials are stored on the server, never in your browser."
+							: "The deck drives the omp SDK, which opens a local callback listener for the provider to redirect to. Credentials never leave this machine."}
 					</p>
 				</div>
 
@@ -177,11 +220,41 @@ export function OAuthFlowModal({ open, provider, providerName, onClose, onComple
 						<a href={consentUrl} target="_blank" rel="noopener noreferrer">
 							<Button variant="primary" className="w-full">Open consent screen in new tab</Button>
 						</a>
+						{/* The URL itself, copyable: someone approving on a different
+						    device (phone, another laptop) cannot follow a link that only
+						    exists as an href in this tab. */}
+						<div className="flex items-start gap-2">
+							<code className="min-w-0 flex-1 break-all rounded border border-line bg-paper-code px-2 py-1 text-2xs text-ink-3">
+								{consentUrl}
+							</code>
+							<CopyButton text={consentUrl} />
+						</div>
 						{instructions ? <p className="text-xs text-ink-3">{instructions}</p> : null}
-						<p className="text-2xs text-ink-4">
-							After approving in the provider's flow, the SDK's local listener picks up the
-							redirect automatically. You can close this modal once the card flips to "signed in."
-						</p>
+						{isRemoteDeck ? (
+							<div className="rounded border border-line bg-paper-3 p-3 text-2xs leading-relaxed text-ink-2">
+								<p className="mb-1 font-medium text-ink">After you approve, the tab will fail to load.</p>
+								<p>
+									That is expected: the provider sends you to{" "}
+									<code>http://localhost:54545/callback?code=…</code>, which only exists on the machine
+									running the deck. Your browser still has the code in its address bar. Either:
+								</p>
+								<ul className="mt-1 list-disc pl-4">
+									<li>
+										copy that whole URL and paste it below, or
+									</li>
+									<li>
+										edit just the beginning of it to{" "}
+										<code className="break-all">{callbackBase}</code> and press Enter — the deck
+										finishes the sign-in itself.
+									</li>
+								</ul>
+							</div>
+						) : (
+							<p className="text-2xs text-ink-4">
+								After approving in the provider's flow, the SDK's local listener picks up the redirect
+								automatically. You can close this modal once the card flips to "signed in."
+							</p>
+						)}
 					</div>
 				) : null}
 
@@ -214,36 +287,61 @@ export function OAuthFlowModal({ open, provider, providerName, onClose, onComple
 					</div>
 				) : null}
 
-				{/* Manual paste fallback — always available while a flow is live. The
-				    SDK races onManualCodeInput against its loopback listener, so this is
-				    the path that works for Tailscale/mobile users who can't reach
-				    127.0.0.1:54545 / :1455 from their browser. */}
+				{/* Bring the code back by hand. The SDK races onManualCodeInput
+				    against its loopback listener, so this works whether or not the
+				    listener ever sees the redirect.
+
+				    On a remote deck the listener is on the wrong machine and can
+				    never win that race, which makes this the only path that
+				    finishes the flow — so it is shown expanded rather than folded
+				    into a disclosure the user has to think to open. */}
 				{phase !== "complete" && phase !== "error" && flowId ? (
-					<details
-						open={showManual}
-						onToggle={(e) => setShowManual((e.target as HTMLDetailsElement).open)}
-					>
-						<summary className="cursor-pointer font-mono text-2xs uppercase tracking-meta text-ink-3 hover:text-ink">
-							Can't open the link? Paste the redirect URL or code
-						</summary>
-						<div className="mt-2 flex flex-col gap-2">
-							<p className="text-2xs text-ink-3">
-								For mobile or remote-deck users: complete the consent in any browser, then
-								copy the full <code>http://localhost:.../callback?code=…&state=…</code> URL
-								from your browser bar and paste it here.
-							</p>
+					isRemoteDeck ? (
+						<div className="flex flex-col gap-2 border-t border-line pt-3">
+							<div className="meta">Paste the redirect URL or code</div>
 							<input
 								type="text"
 								value={manualCode}
 								onChange={(e) => setManualCode(e.target.value)}
-								placeholder="Paste redirect URL or raw code"
+								placeholder="http://localhost:54545/callback?code=… — or just the code"
 								className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-2xs"
 							/>
-							<Button onClick={submitManual} disabled={!manualCode.trim() || submittingManual}>
-								{submittingManual ? "Submitting…" : "Submit code"}
+							<Button
+								variant="primary"
+								onClick={submitManual}
+								disabled={!manualCode.trim() || submittingManual}
+							>
+								{submittingManual ? "Submitting…" : "Finish sign-in"}
 							</Button>
 						</div>
-					</details>
+					) : (
+						<details
+							open={showManual}
+							onToggle={(e) => setShowManual((e.target as HTMLDetailsElement).open)}
+						>
+							<summary className="cursor-pointer font-mono text-2xs uppercase tracking-meta text-ink-3 hover:text-ink">
+								Can't open the link? Paste the redirect URL or code
+							</summary>
+							<div className="mt-2 flex flex-col gap-2">
+								<p className="text-2xs text-ink-3">
+									Approving on another device (a phone, or a browser that can't reach this
+									machine) leaves the code in that browser's address bar. Copy the whole
+									<code> http://localhost:.../callback?code=…&state=…</code> URL and paste it
+									here.
+								</p>
+								<input
+									type="text"
+									value={manualCode}
+									onChange={(e) => setManualCode(e.target.value)}
+									placeholder="Paste redirect URL or raw code"
+									className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-2xs"
+								/>
+								<Button onClick={submitManual} disabled={!manualCode.trim() || submittingManual}>
+									{submittingManual ? "Submitting…" : "Submit code"}
+								</Button>
+							</div>
+						</details>
+					)
 				) : null}
 
 				<div className="flex justify-end gap-2 border-t border-line pt-3">

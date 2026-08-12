@@ -25,6 +25,7 @@ import type {
 	SeedKbSystemResponse,
 } from "@omp-deck/protocol";
 
+import { getAgentApiHint } from "./deck-urls.ts";
 import { resolveKbRoot } from "./kb-service.ts";
 import { logger } from "./log.ts";
 import { getOnboardingState, markOnboardingComplete } from "./onboarding-state.ts";
@@ -119,9 +120,9 @@ const KB_SYSTEM_STUBS: ReadonlyArray<{ name: string; body: string }> = [
 			"- **KB** — this folder. Read via `kb://` URIs or `GET /api/kb/file?path=…`.",
 			"- **Skills** — installed under `~/.omp/agent/skills/`.",
 			"",
-			"## Local API base",
+			"## Deck API base",
 			"",
-			"`http://127.0.0.1:8787/api` — reachable from any session via `bash` + `curl`.",
+			getAgentApiHint(),
 			"",
 		].join("\n"),
 	},

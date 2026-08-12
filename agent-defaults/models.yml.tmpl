@@ -1,0 +1,115 @@
+providers:
+  # FAST tier providers (cerebras + anthropic are built-in — need only API keys in secrets/env)
+  groq:
+    baseUrl: https://api.groq.com/openai/v1
+    apiKey: ${OMP_PROVIDER_GROQ_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  # official Inception Labs endpoint (your old `inception` went through omnirouter proxy)
+  inception:
+    baseUrl: https://api.inceptionlabs.ai/v1
+    apiKey: ${OMP_PROVIDER_INCEPTION_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  codexhub:
+    baseUrl: https://api.codexhub.click/v1
+    apiKey: ${OMP_PROVIDER_CODEXHUB_API_KEY}
+    api: openai-completions
+    models:
+    - id: deepseek-v4-pro
+      contextWindow: 1000000
+      description: "Best reasoning capability"
+    - id: deepseek-v4-flash
+      contextWindow: 1000000
+      description: "Fastest model"
+
+  9router:
+    baseUrl: https://9router.v244.net/v1
+    apiKey: ${OMP_PROVIDER_9ROUTER_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  inception:
+    baseUrl: https://omnirouter.v244.net/api/v1
+    apiKey: ${OMP_PROVIDER_INCEPTION_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  omni:
+    baseUrl: https://omni.v244.net/v1
+    apiKey: ${OMP_PROVIDER_OMNI_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  open-go:
+    baseUrl: https://opencode.ai/zen/go/v1
+    apiKey: ${OMP_PROVIDER_OPEN_GO_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+  gepete:
+    baseUrl: https://bandelbanget.xyz/v1
+    apiKey: ${OMP_PROVIDER_GEPETE_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+
+# nghimmo has been replaced by `ngh-claude` below — this block kept for reference during migration (different key).
+
+  ngh-claude:
+    baseUrl: https://api.nghimmo.com/v1
+    apiKey: ${OMP_PROVIDER_NGH_CLAUDE_API_KEY}
+    api: openai-completions
+    authHeader: true
+    models:
+    - id: nghi/claude-opus-4.8
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.8-thinking
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.7
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.7-thinking
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.6
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.6-thinking
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.5
+      contextWindow: 200000
+    - id: nghi/claude-opus-4.5-thinking
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-5
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4.6
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4.6-thinking
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4.5
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4.5-thinking
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4
+      contextWindow: 200000
+    - id: nghi/claude-sonnet-4-thinking
+      contextWindow: 200000
+    - id: nghi/claude-haiku-4.5
+      contextWindow: 200000
+    - id: nghi/claude-haiku-4.5-thinking
+      contextWindow: 200000
+    - id: nghi/auto
+      contextWindow: 200000
