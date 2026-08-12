@@ -103,15 +103,35 @@ OMP_DECK_DATA_DIR=/var/lib/omp-deck           # managed .env + audit + bridge db
 OMP_AGENT_DIR=/var/lib/omp/agent              # SDK session + auth
 OMP_DECK_DEFAULT_CWD=/workspace               # mount your code here
 LOG_LEVEL=warn                                # quieter in steady state
+
+OMP_DECK_PUBLIC_URL=https://deck.example.com  # what the deck calls itself in text
+OMP_DECK_AUTH_USERNAME=you                    # bootstrap account
+OMP_DECK_AUTH_PASSWORD_HASH='$argon2id$...'   # digest, so no plaintext in env
+```
+
+Generate the digest with:
+
+```sh
+bun -e 'console.log(await Bun.password.hash(process.argv[1], "argon2id"))' 'your password'
 ```
 
 ## Hardening checklist
 
 Before exposing the deck on a network anyone else can reach:
 
-- [ ] `OMP_DECK_HOST=127.0.0.1` (default). Confirm with `ss -tlnp` or `netstat`.
-- [ ] Front it with Tailscale Serve, an SSH tunnel, or a reverse proxy that
-      enforces auth. Never bind `0.0.0.0` without one.
+- [ ] Decide which perimeter you are using. Binding `0.0.0.0` turns the deck's
+      own authentication on automatically, so a public bind is no longer
+      unprotected by default — but a network perimeter (Tailscale Serve, an SSH
+      tunnel, a reverse proxy that enforces auth) is still the stronger option,
+      and the two compose.
+- [ ] A password is configured (`OMP_DECK_AUTH_PASSWORD_HASH`, or completed
+      first-run setup). Check the boot log: the deck warns loudly while no
+      account exists.
+- [ ] `OMP_DECK_AUTH_SETUP_TOKEN` is set if the deck will be publicly reachable
+      before you have created the account.
+- [ ] TLS terminates in front of the deck, so the session cookie gets `Secure`.
+      If your proxy doesn't set `X-Forwarded-Proto`, set
+      `OMP_DECK_AUTH_SECURE_COOKIE=1`.
 - [ ] Provider API keys live in env vars (via shell profile or the deck's
       managed `.env`) — never committed in the repo or shipped in an image.
 - [ ] The data dir (`OMP_DECK_DATA_DIR`) is user-only readable. `chmod 700` on
@@ -120,8 +140,9 @@ Before exposing the deck on a network anyone else can reach:
       for a long time. Today it grows unbounded.
 - [ ] If Telegram bridge is in use, `TELEGRAM_ALLOWED_USERS` is set. The
       bridge refuses to start without it.
-- [ ] If exposing via Funnel, you accept that anyone with the URL can drive
-      the chat. Add a reverse-proxy auth layer for any shared deployment.
+- [ ] If exposing via Funnel, the deck's sign-in is the only thing between the
+      public internet and an agent with a shell. Confirm the password is a
+      real one, and consider a reverse-proxy auth layer in front of it too.
 
 ## Updating
 

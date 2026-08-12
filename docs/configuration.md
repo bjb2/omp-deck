@@ -37,10 +37,17 @@ The same directory holds:
 
 | Var | Default | Restart? | Notes |
 |---|---|---|---|
-| `OMP_DECK_HOST` | `127.0.0.1` | yes | Bind host. Loopback by default — never `0.0.0.0` without an auth layer. |
+| `OMP_DECK_HOST` | `127.0.0.1` | yes | Bind host. Loopback by default. Binding anywhere else turns authentication on automatically — see [authentication.md](./authentication.md). |
 | `OMP_DECK_PORT` | `8787` | yes | HTTP + WebSocket port. |
 | `OMP_DECK_WEB_PORT` | `5173` | yes | Vite dev server port (dev only). Proxies `/api` and `/ws` to `OMP_DECK_PORT`. |
-| `OMP_DECK_API_BASE` | derived | no | Loopback URL standalone bridge processes use. Derived from host+port when unset. |
+| `OMP_DECK_API_BASE` | derived | no | Loopback URL standalone bridge processes use. Derived from host+port when unset. Internal only — not your public address. |
+| `OMP_DECK_PUBLIC_URL` | _(none)_ | no | The origin users actually reach the deck on, e.g. `https://deck.example.com`. Serving doesn't need it (the app is same-origin); the deck needs it to stop *saying* `localhost` in onboarding text, agent API hints and OAuth instructions. |
+
+### Authentication
+
+Username + password sign-in, on by default for any non-loopback bind. The full
+variable reference and recovery procedure live in
+[authentication.md](./authentication.md).
 
 ### Workspaces
 

@@ -10,7 +10,21 @@ export class DeckClient {
 	constructor(
 		private readonly apiBase: string,
 		private readonly wsUrl: string,
+		/**
+		 * Deck API token. The bridge is a separate process with no browser and no
+		 * cookie jar, so once the deck requires authentication this bearer token is
+		 * the only way in. It is injected into the bridge's environment by the
+		 * supervisor, which reads it from the same place the server generated it.
+		 */
+		private readonly apiToken?: string,
 	) {}
+
+	/** Headers every deck call carries: JSON plus the bearer token when present. */
+	private authHeaders(extra?: RequestInit["headers"]): Record<string, string> {
+		const headers: Record<string, string> = { "content-type": "application/json" };
+		if (this.apiToken) headers.authorization = `Bearer ${this.apiToken}`;
+		return { ...headers, ...(extra as Record<string, string> | undefined) };
+	}
 
 	async createSession(opts: { cwd: string; resumeFromPath?: string }): Promise<CreateSessionResponse> {
 		const body: CreateSessionRequest = {
@@ -25,7 +39,10 @@ export class DeckClient {
 	}
 
 	async deleteSession(sessionId: string): Promise<void> {
-		const res = await fetch(`${this.apiBase}/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+		const res = await fetch(`${this.apiBase}/api/sessions/${encodeURIComponent(sessionId)}`, {
+			method: "DELETE",
+			headers: this.authHeaders(),
+		});
 		if (res.status === 404) return;
 		if (!res.ok) throw new Error(`deck delete session failed: ${res.status}`);
 	}
@@ -37,7 +54,13 @@ export class DeckClient {
 		onText: (text: string) => void;
 	}): Promise<string> {
 		return new Promise((resolve, reject) => {
-			const ws = new WebSocket(this.wsUrl);
+			// Unlike a browser, a server-side WebSocket client can set request
+			// headers on the upgrade, so the bridge authenticates the socket the
+			// same way it authenticates its HTTP calls.
+			const ws = new WebSocket(
+				this.wsUrl,
+				this.apiToken ? { headers: { authorization: `Bearer ${this.apiToken}` } } : undefined,
+			);
 			let promptSent = false;
 			let settled = false;
 			let latestText = "";
@@ -109,7 +132,7 @@ export class DeckClient {
 	private async request<T>(path: string, init: RequestInit): Promise<T> {
 		const res = await fetch(`${this.apiBase}${path}`, {
 			...init,
-			headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+			headers: this.authHeaders(init.headers),
 		});
 		if (!res.ok) throw new Error(`deck request failed ${path}: HTTP ${res.status} ${await res.text()}`);
 		return (await res.json()) as T;

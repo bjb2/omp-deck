@@ -17,6 +17,16 @@ export interface Config {
 	/** Absolute path to the uploads root (images pasted into task bodies). */
 	uploadsRoot: string;
 	/**
+	 * The origin users actually reach this deck on, e.g. `https://deck.example.com`.
+	 *
+	 * Nothing about serving requests depends on it — the app is same-origin, so
+	 * the browser resolves `/api/...` correctly whatever the hostname. It exists
+	 * because the deck *talks about* URLs: onboarding text, the agent's own API
+	 * base, OAuth instructions, notification links. Without it every one of those
+	 * says `127.0.0.1`, which is right for a laptop and wrong for a server.
+	 */
+	publicUrl?: string;
+	/**
 	 * Prompt to fire automatically on every NEW session once a WS subscriber
 	 * attaches. Empty string or null disables. Default: "/start" (expands to the
 	 * ~/.omp/agent/commands/start.md slash command if present).
@@ -46,6 +56,27 @@ export function splitList(value: string | undefined): string[] {
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
+}
+
+/**
+ * Normalize a configured public URL to a bare origin.
+ *
+ * Accepts what people actually type — `deck.example.com`, with or without a
+ * scheme, with or without a trailing slash — and returns `https://deck.example.com`.
+ * A bare hostname is assumed to be https: a deck published on a public hostname
+ * without TLS is a mistake, not a configuration we should quietly render into
+ * sign-in instructions.
+ */
+export function normalizePublicUrl(raw: string | undefined): string | undefined {
+	const value = raw?.trim();
+	if (!value) return undefined;
+	const withScheme = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+	try {
+		const url = new URL(withScheme);
+		return url.origin;
+	} catch {
+		return undefined;
+	}
 }
 
 function resolveWebDist(): string | undefined {
@@ -105,5 +136,6 @@ export function loadConfig(): Config {
 		// Set OMP_DECK_AUTO_START="" or "0" to disable, or to any other prompt
 		// string to override the default "/start" slash-command invocation.
 		autoStartCommand: parseAutoStart(process.env.OMP_DECK_AUTO_START),
+		publicUrl: normalizePublicUrl(process.env.OMP_DECK_PUBLIC_URL),
 	};
 }

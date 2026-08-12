@@ -23,9 +23,11 @@ and needs the corrections below.
   deck server never receives the OAuth provider callback itself — it only
   shows the consent URL and awaits the SDK promise. No `/api/auth/oauth/callback`
   route is needed on the deck.
-- Mobile / Tailscale fallback already exists in the SDK: `onManualCodeInput`
-  races the loopback listener. The deck modal needs a "paste redirect URL or
-  code" textbox wired to this callback, always visible, not only on failure.
+- Mobile / Tailscale / **self-hosted** fallback already exists in the SDK:
+  `onManualCodeInput` races the loopback listener. The deck modal wires a
+  "paste redirect URL or code" textbox to it. On a remote deck the listener is
+  on the wrong machine and can never win that race, so the modal promotes the
+  paste box from a collapsed disclosure to the primary control.
 
 ## Exact callback shape
 
@@ -99,11 +101,28 @@ short-lived listeners. Concrete implications:
 2. **Detect the "omp CLI is already logging in" case.** Same port collision.
    The SDK throws; surface the error to the user as "Port 54545 in use —
    close any running `omp /login` and retry."
-3. **No deck-side callback route.** Do _not_ register
-   `/api/auth/oauth/callback` on the Hono router. The brief's option (b) is
-   not feasible without an SDK-level `redirectUri` override that does not
-   exist for Anthropic/Codex (the URI is hard-coded in the per-provider
-   `generateAuthUrl` and matches the provider's app registration).
+3. **No deck-side *redirect target*.** The provider will never be told to
+   redirect to the deck: `AnthropicOAuthFlow` / `OpenAICodexFlow` call
+   `super(ctrl, CALLBACK_PORT, CALLBACK_PATH)` with a bare port number, so the
+   redirect URI is always `http://localhost:<port>/callback`, and the
+   provider's app registration pins the same value.
+
+   Note the SDK base class *does* accept an `OAuthCallbackFlowOptions` with
+   `redirectUri` / `callbackHostname` ("Exact redirect URI advertised to the
+   provider; disables port fallback"). It is unused by the Anthropic and Codex
+   flows, so it does not help those two — but the earlier claim here that no
+   such override exists at all is wrong, and a provider that opts into the
+   options form could be pointed at the deck.
+
+4. **There is nevertheless a `GET /callback` route on the deck** — added for
+   self-hosting, and it is a *landing* route rather than a redirect target. On
+   a remote deck the provider's redirect dies on the user's own
+   `localhost:54545`, but the authorization code is sitting in that browser's
+   address bar. Editing the host of that dead URL to the deck's own origin
+   (`https://deck.example.com/oauth/callback?code=…&state=…`) reaches this
+   route, which feeds the URL into the same `onManualCodeInput` deferred the
+   paste box uses. `parseCallbackInput` extracts the code and the SDK verifies
+   `state`, so the route does no security reasoning of its own.
 
 ## Driving the flow — sketch
 

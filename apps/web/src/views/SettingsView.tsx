@@ -23,6 +23,7 @@ import { bridgesApi } from "@/lib/bridges-api";
 import { settingsApi } from "@/lib/settings-api";
 import { orientationApi } from "@/lib/orientation-api";
 import { authApi } from "@/lib/auth-api";
+import { type AuthError, type AuthStatus, deckAuthApi } from "@/lib/deck-auth-api";
 import { playNotificationTone } from "@/lib/audio";
 import { useNotificationPermission } from "@/lib/notifications";
 import { useStore, type NotificationItem } from "@/lib/store";
@@ -30,6 +31,7 @@ import { THEMES, useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 const SECTIONS = [
+	{ id: "account", label: "Account", description: "Your sign-in, password and devices" },
 	{ id: "env", label: "Env", description: "Process and deck-managed variables" },
 	{ id: "providers", label: "Providers", description: "OAuth sign-in and API-key state" },
 	{ id: "messaging", label: "Messaging", description: "Telegram and future chat bridges" },
@@ -82,7 +84,9 @@ export function SettingsView() {
 							))}
 						</nav>
 						<section className="min-h-0 overflow-auto p-4">
-							{selected === "env" ? (
+							{selected === "account" ? (
+								<AccountSection />
+							) : selected === "env" ? (
 								<EnvSection />
 							) : selected === "providers" ? (
 								<ProvidersSection />
@@ -1716,6 +1720,150 @@ function formatUptime(startedIso: string): string {
  * fires `models_changed` server-side so the picker re-empties without a
  * deck restart. See docs/oauth-deck-sdk-findings.md for the SDK contract.
  */
+/**
+ * Your deck account: who you're signed in as, how to change the password, and
+ * how to leave.
+ *
+ * On a deck with authentication disabled (the loopback-only case) this becomes
+ * an explanation of why there is nothing to configure, rather than a form that
+ * cannot do anything — the difference between "not applicable" and "broken" is
+ * worth the extra branch.
+ */
+function AccountSection() {
+	const [status, setStatus] = useState<AuthStatus | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [current, setCurrent] = useState("");
+	const [next, setNext] = useState("");
+	const [confirm, setConfirm] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+
+	async function refresh(): Promise<void> {
+		setLoading(true);
+		try {
+			setStatus(await deckAuthApi.status());
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	useEffect(() => {
+		void refresh();
+	}, []);
+
+	async function changePassword(e: React.FormEvent): Promise<void> {
+		e.preventDefault();
+		setError(null);
+		setNotice(null);
+		if (next !== confirm) {
+			setError("The two new passwords don't match.");
+			return;
+		}
+		setBusy(true);
+		try {
+			await deckAuthApi.changePassword(current, next);
+			setCurrent("");
+			setNext("");
+			setConfirm("");
+			setNotice("Password changed. Every other signed-in device has been signed out.");
+		} catch (err) {
+			setError((err as AuthError).message || "Could not change the password.");
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function signOut(): Promise<void> {
+		await deckAuthApi.logout().catch(() => undefined);
+		// Full reload rather than a router navigation: it tears down the
+		// WebSocket and every cached store slice, so nothing from the old
+		// session lingers in memory behind the login screen.
+		window.location.reload();
+	}
+
+	if (loading) return <div className="font-mono text-2xs text-ink-3">Loading …</div>;
+
+	if (status && !status.authRequired) {
+		return (
+			<div className="flex flex-col gap-3">
+				<div className="meta">Account</div>
+				<p className="max-w-prose text-sm text-ink-2">
+					Authentication is off. The deck only does that when it is bound to loopback and no password is
+					configured, so the only thing that can reach it is this machine.
+				</p>
+				<p className="max-w-prose text-sm text-ink-2">
+					Publishing it on a hostname turns authentication on automatically. To require a password here too,
+					set <code>OMP_DECK_AUTH_MODE=on</code> and <code>OMP_DECK_AUTH_PASSWORD</code>, then restart.
+				</p>
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex max-w-md flex-col gap-5">
+			<div className="flex flex-col gap-2">
+				<div className="meta">Signed in as</div>
+				<div className="row items-center justify-between">
+					<span className="font-mono text-sm text-ink">{status?.user?.username ?? "unknown"}</span>
+					<Button variant="outline" onClick={() => void signOut()}>
+						Sign out
+					</Button>
+				</div>
+			</div>
+
+			<form onSubmit={changePassword} className="flex flex-col gap-3">
+				<div className="meta">Change password</div>
+				<label className="block">
+					<div className="meta mb-1">Current password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="current-password"
+						value={current}
+						onChange={(e) => setCurrent(e.target.value)}
+						required
+					/>
+				</label>
+				<label className="block">
+					<div className="meta mb-1">New password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="new-password"
+						minLength={8}
+						value={next}
+						onChange={(e) => setNext(e.target.value)}
+						required
+					/>
+				</label>
+				<label className="block">
+					<div className="meta mb-1">Confirm new password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="new-password"
+						value={confirm}
+						onChange={(e) => setConfirm(e.target.value)}
+						required
+					/>
+				</label>
+				{error ? (
+					<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">
+						{error}
+					</div>
+				) : null}
+				{notice ? <div className="text-xs text-ink-2">{notice}</div> : null}
+				<Button type="submit" variant="primary" disabled={busy} className="self-start">
+					{busy ? "Saving…" : "Change password"}
+				</Button>
+			</form>
+		</div>
+	);
+}
+
 function ProvidersSection() {
 	const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
 	const [error, setError] = useState<string | undefined>();
