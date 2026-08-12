@@ -1,0 +1,15 @@
+{
+	"name": "omp-deck",
+	"short_name": "omp-deck",
+	"description": "Cockpit for the omp coding agent — chat, files, git, tasks, routines, from your phone or your desk.",
+	"start_url": "/?source=pwa",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "any",
+	"background_color": "#0a0b10",
+	"theme_color": "#0a0b10",
+	"icons": [
+		{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+		{ "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+	]
+}

@@ -47,6 +47,15 @@ RUN bun run build
 FROM oven/bun:1.3.14 AS runtime
 WORKDIR /app
 
+# git: the git cockpit and GitHub-clone flow shell out to the real binary
+# rather than reimplementing it (see git-service.ts's docblock for why).
+# zip/unzip: the agent-config import/export flow round-trips a whole
+# ~/.omp/agent directory as a single archive; shelling out avoids pulling in
+# a JS zip library for something the OS already does well.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends git zip unzip \
+	&& rm -rf /var/lib/apt/lists/*
+
 # Re-install with only server-relevant workspace (still pulls protocol).
 COPY package.json bun.lock* tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/

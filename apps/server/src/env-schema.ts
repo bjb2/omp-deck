@@ -268,6 +268,23 @@ export const ENV_SCHEMA: EnvSchemaEntry[] = [
 		description: "Default omp SDK model identifier.",
 	},
 	{
+		key: "GITHUB_TOKEN",
+		valueType: "string",
+		sensitive: true,
+		restartRequired: false,
+		hotApply: true,
+		description:
+			"Personal access token powering the GitHub panel in Explorer (list/clone your repos) and authenticated git push/pull for github.com remotes. GITHUB_PERSONAL_ACCESS_TOKEN also works and is shared with the github MCP server if configured.",
+	},
+	{
+		key: "GITHUB_PERSONAL_ACCESS_TOKEN",
+		valueType: "string",
+		sensitive: true,
+		restartRequired: false,
+		hotApply: true,
+		description: "Same as GITHUB_TOKEN — kept as an alias since it's also what the github MCP server config expects.",
+	},
+	{
 		key: "TELEGRAM_BOT_TOKEN",
 		valueType: "string",
 		sensitive: true,
