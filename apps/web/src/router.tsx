@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { Suspense, lazy, useEffect, useRef } from "react";
 import { createBrowserRouter, Outlet, RouterProvider, useLocation, useNavigate } from "react-router-dom";
 import { ChatView } from "./views/ChatView";
 import { TasksView } from "./views/TasksView";
@@ -12,6 +12,24 @@ import { SettingsView } from "./views/SettingsView";
 import { IntegrationsView } from "./views/IntegrationsView";
 import { OnboardingView } from "./views/OnboardingView";
 import { onboardingApi } from "./lib/onboarding-api";
+
+/**
+ * Explorer and Agent Config pull in CodeMirror (~600KB minified) for the code
+ * editor and diff viewer. Neither is needed to open the app and chat — the
+ * common case, especially on the mobile PWA where every extra kilobyte of
+ * initial JS is a slower first paint on a cellular connection — so both are
+ * code-split behind React.lazy rather than bundled into the main chunk.
+ */
+const ExplorerView = lazy(() => import("./views/ExplorerView").then((m) => ({ default: m.ExplorerView })));
+const AgentConfigView = lazy(() => import("./views/AgentConfigView").then((m) => ({ default: m.AgentConfigView })));
+
+function LazyViewFallback() {
+	return (
+		<div className="flex h-full w-full items-center justify-center bg-paper">
+			<div className="font-mono text-2xs text-ink-3">Loading…</div>
+		</div>
+	);
+}
 
 /**
  * First-paint redirect: if the server reports `needsOnboarding`, route
@@ -46,6 +64,22 @@ const router = createBrowserRouter([
 		element: <OnboardingGate />,
 		children: [
 			{ path: "/", element: <ChatView /> },
+			{
+				path: "/explorer",
+				element: (
+					<Suspense fallback={<LazyViewFallback />}>
+						<ExplorerView />
+					</Suspense>
+				),
+			},
+			{
+				path: "/agent-config",
+				element: (
+					<Suspense fallback={<LazyViewFallback />}>
+						<AgentConfigView />
+					</Suspense>
+				),
+			},
 			{ path: "/tasks", element: <TasksView /> },
 			{ path: "/routines", element: <RoutinesView /> },
 			{ path: "/routines/:id/runs/:runId", element: <RunDetailView /> },

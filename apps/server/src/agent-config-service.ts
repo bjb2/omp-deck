@@ -64,9 +64,16 @@ export interface AgentFileEntry {
 	isDatabase: boolean;
 }
 
-export async function listAgentDir(sub: string): Promise<{ path: string; entries: AgentFileEntry[] }> {
-	const target = sub ? path.join(agentDir(), sub) : agentDir();
-	const guard = guardAgentDirPath(target, { mustExist: true });
+/**
+ * List a directory under the agent dir. `target` is an absolute path — same
+ * contract as `files-service.listDir` — or empty/omitted for the agent dir
+ * root itself. Matching that contract (rather than a "relative sub-path"
+ * one) is what lets the web client's `FileTree` component be reused verbatim
+ * for both the workspace explorer and this browser: it always passes back
+ * the absolute `path` values a previous listing returned.
+ */
+export async function listAgentDir(target: string): Promise<{ path: string; entries: AgentFileEntry[] }> {
+	const guard = guardAgentDirPath(target || agentDir(), { mustExist: true });
 	if (!guard.ok || !guard.resolved) throw new GuardError(guard.reason ?? "path not allowed");
 	const dirents = await fs.readdir(guard.resolved, { withFileTypes: true });
 	const entries = await Promise.all(

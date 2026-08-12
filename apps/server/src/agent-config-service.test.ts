@@ -60,6 +60,18 @@ describe("browse and edit", () => {
 		expect(db?.isDatabase).toBe(true);
 	});
 
+	test("listAgentDir accepts the absolute path a prior listing returned, for a subdirectory", async () => {
+		// The web client's file tree always re-lists using the `path` value a
+		// previous entry gave it — an absolute path, not a path relative to the
+		// agent dir. listAgentDir must treat its argument the same way
+		// files-service.listDir does, or every second-level expand 404s.
+		const root = await listAgentDir("");
+		const agentsDir = root.entries.find((e) => e.name === "agents");
+		expect(agentsDir).toBeDefined();
+		const nested = await listAgentDir(agentsDir!.path);
+		expect(nested.entries.map((e) => e.name)).toEqual(["backend.md"]);
+	});
+
 	test("readAgentFile reads a text file", async () => {
 		const result = await readAgentFile(path.join(agentDir, "config.yml"));
 		expect(result.content).toBe("theme: dark\n");

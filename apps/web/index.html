@@ -19,7 +19,7 @@
 			// Apply the theme BEFORE React mounts so there is no flash of the
 			// wrong palette. Kept tiny on purpose; mirrored by `apps/web/src/lib/theme.ts`.
 			(function () {
-				var THEMES = ["paper", "slate", "horizon"];
+				var THEMES = ["paper", "slate", "horizon", "aurora"];
 				var stored = null;
 				try {
 					stored = localStorage.getItem("omp-deck:theme");
@@ -31,13 +31,13 @@
 					window.matchMedia &&
 					window.matchMedia("(prefers-color-scheme: dark)").matches
 				) {
-					theme = "slate";
+					theme = "aurora";
 				} else {
 					theme = "paper";
 				}
 				document.documentElement.setAttribute("data-theme", theme);
 				var meta = document.querySelector('meta[name="theme-color"]');
-				var metaColors = { paper: "#f7f4ee", slate: "#0f131a", horizon: "#1c1e26" };
+				var metaColors = { paper: "#f7f4ee", slate: "#0f131a", horizon: "#1c1e26", aurora: "#0a0b10" };
 				if (meta) meta.setAttribute("content", metaColors[theme] || metaColors.paper);
 				var scheme = document.querySelector('meta[name="color-scheme"]');
 				if (!scheme) {

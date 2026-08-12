@@ -34,6 +34,7 @@
 	--line-strong: 207 200 182;
 	--accent: 154 52 18;
 	--accent-soft: 253 228 207;
+	--accent-2: 154 52 18;
 	--success: 21 128 61;
 	--warn: 180 83 9;
 	--danger: 153 27 27;
@@ -56,6 +57,7 @@
 	--line-strong: 55 62 74;
 	--accent: 249 115 22;
 	--accent-soft: 64 36 18;
+	--accent-2: 249 115 22;
 	--success: 74 222 128;
 	--warn: 251 191 36;
 	--danger: 248 113 113;
@@ -82,10 +84,39 @@
 	--line-strong: 64 68 88;
 	--accent: 233 86 120;       /* pink #e95678 */
 	--accent-soft: 56 28 38;    /* dark pink tint for soft fills */
+	--accent-2: 233 86 120;
 	--success: 41 211 152;      /* mint #29d398 */
 	--warn: 250 183 149;        /* peach #fab795 */
 	--danger: 233 86 120;       /* pink — horizon uses the accent for errors */
 	--thinking: 184 119 219;    /* purple #b877db */
+	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Aurora — the flagship dark look. Deep near-black canvas, a true two-stop
+   violet→cyan accent gradient (most components read --accent alone; a few
+   gradient surfaces — buttons, focus rings, the nav rail's active tab — blend
+   --accent with --accent-2 for the signature look), glass panels via the
+   .glass utility below. Same token contract as every other theme. */
+[data-theme="aurora"] {
+	color-scheme: dark;
+	--paper: 10 11 16;          /* #0a0b10 */
+	--paper-2: 15 16 23;
+	--paper-3: 22 24 33;
+	--paper-code: 8 9 13;
+	--ink: 237 238 242;
+	--ink-2: 191 194 206;
+	--ink-3: 137 141 158;
+	--ink-4: 88 92 108;
+	--line: 34 37 49;
+	--line-strong: 50 54 70;
+	--accent: 139 92 246;       /* violet #8b5cf6 */
+	--accent-2: 34 211 238;     /* cyan #22d3ee */
+	--accent-soft: 45 32 74;
+	--success: 52 211 153;
+	--warn: 250 204 21;
+	--danger: 251 113 133;
+	--thinking: 217 70 239;
 	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
 	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -182,6 +213,49 @@
 }
 [data-theme="horizon"] .hljs-deletion {
 	color: rgb(233 86 120);
+}
+
+[data-theme="aurora"] .hljs-comment,
+[data-theme="aurora"] .hljs-quote {
+	color: rgb(var(--ink-3));
+}
+[data-theme="aurora"] .hljs-keyword,
+[data-theme="aurora"] .hljs-selector-tag,
+[data-theme="aurora"] .hljs-literal,
+[data-theme="aurora"] .hljs-section,
+[data-theme="aurora"] .hljs-link {
+	color: rgb(196 181 253); /* light violet */
+}
+[data-theme="aurora"] .hljs-string,
+[data-theme="aurora"] .hljs-attr,
+[data-theme="aurora"] .hljs-symbol,
+[data-theme="aurora"] .hljs-bullet,
+[data-theme="aurora"] .hljs-addition {
+	color: rgb(94 234 212); /* teal, bridges toward accent-2 */
+}
+[data-theme="aurora"] .hljs-number,
+[data-theme="aurora"] .hljs-meta,
+[data-theme="aurora"] .hljs-built_in,
+[data-theme="aurora"] .hljs-builtin-name,
+[data-theme="aurora"] .hljs-type,
+[data-theme="aurora"] .hljs-params {
+	color: rgb(250 204 21);
+}
+[data-theme="aurora"] .hljs-title,
+[data-theme="aurora"] .hljs-function .hljs-title,
+[data-theme="aurora"] .hljs-class .hljs-title {
+	color: rgb(34 211 238); /* cyan #22d3ee — accent-2 */
+}
+[data-theme="aurora"] .hljs-variable,
+[data-theme="aurora"] .hljs-template-variable,
+[data-theme="aurora"] .hljs-name,
+[data-theme="aurora"] .hljs-selector-id,
+[data-theme="aurora"] .hljs-selector-class,
+[data-theme="aurora"] .hljs-tag {
+	color: rgb(251 113 133);
+}
+[data-theme="aurora"] .hljs-deletion {
+	color: rgb(251 113 133);
 }
 
 @layer base {
@@ -380,4 +454,84 @@
 }
 .routine-canvas .react-flow__controls-button:hover svg {
 	fill: rgb(var(--ink));
+}
+/* ─── Aurora-flavored utilities ──────────────────────────────────────────────
+   These are theme-contract-safe: on paper/slate/horizon, --accent-2 equals
+   --accent, so a "gradient" degrades to a flat fill with zero visual change.
+   Only Aurora, where the two tokens genuinely differ, shows the effect.
+   Motion utilities are global — they use the shared spring easing so any
+   view can opt in, not just the cockpit. */
+
+.glass {
+	background: rgb(var(--paper-2) / 0.72);
+	backdrop-filter: blur(16px) saturate(1.4);
+	-webkit-backdrop-filter: blur(16px) saturate(1.4);
+	border: 1px solid rgb(var(--line) / 0.7);
+}
+
+.gradient-accent {
+	background-image: linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-2)));
+}
+
+.gradient-accent-text {
+	background-image: linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-2)));
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
+.glow-accent {
+	box-shadow:
+		0 0 0 1px rgb(var(--accent) / 0.4),
+		0 0 24px -4px rgb(var(--accent) / 0.55),
+		0 0 48px -12px rgb(var(--accent-2) / 0.35);
+}
+
+.glow-accent-sm {
+	box-shadow: 0 0 16px -6px rgb(var(--accent) / 0.5);
+}
+
+/* Spring-flavored transition — snappier settle than ease-out, used for
+   panel/card entrances and interactive presses. Respects reduced motion via
+   the global media query below. */
+.transition-spring {
+	transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+	transition-duration: 320ms;
+}
+
+@keyframes rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.99);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+.animate-rise-in {
+	animation: rise-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes pulse-glow {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgb(var(--accent) / 0.4);
+	}
+	50% {
+		box-shadow: 0 0 0 6px rgb(var(--accent) / 0);
+	}
+}
+.animate-pulse-glow {
+	animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-rise-in,
+	.animate-pulse-glow {
+		animation: none;
+	}
+	.transition-spring {
+		transition-duration: 1ms;
+	}
 }

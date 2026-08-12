@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
  * reload still lands on the saved theme.
  */
 
-export type ThemeId = "paper" | "slate" | "horizon";
+export type ThemeId = "paper" | "slate" | "horizon" | "aurora";
 
 export interface ThemeDefinition {
 	id: ThemeId;
@@ -59,6 +59,19 @@ export const THEMES: ThemeDefinition[] = [
 		metaThemeColor: "#1c1e26",
 		colorScheme: "dark",
 	},
+	{
+		id: "aurora",
+		label: "Aurora",
+		description: "Near-black canvas, violet-to-cyan accent, glass panels. The new default.",
+		swatchTokens: [
+			{ token: "paper", label: "Page" },
+			{ token: "paper-3", label: "Inset" },
+			{ token: "ink", label: "Ink" },
+			{ token: "accent", label: "Accent" },
+		],
+		metaThemeColor: "#0a0b10",
+		colorScheme: "dark",
+	},
 ];
 
 export const THEME_IDS = THEMES.map((t) => t.id);
@@ -78,8 +91,11 @@ function readStoredTheme(): ThemeId | undefined {
 }
 
 function systemPreferredTheme(): ThemeId {
+	// Aurora is the flagship dark look — a first-time visitor with a dark OS
+	// preference and no saved choice lands there rather than on the older
+	// Slate default.
 	if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-		return "slate";
+		return "aurora";
 	}
 	return "paper";
 }
