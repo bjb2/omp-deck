@@ -1721,3 +1721,245 @@ export interface OAuthPromptReplyRequest {
 	promptId: string;
 	answer: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File explorer
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FileEntryKind = "file" | "dir" | "symlink";
+
+export interface FileEntry {
+	name: string;
+	path: string;
+	kind: FileEntryKind;
+	sizeBytes: number | null;
+	modifiedAt: string | null;
+}
+
+export interface ListDirResponse {
+	path: string;
+	entries: FileEntry[];
+}
+
+export interface ReadFileResponse {
+	path: string;
+	content: string;
+	sizeBytes: number;
+}
+
+export interface WriteFileRequest {
+	path: string;
+	content: string;
+}
+
+export interface MakeDirRequest {
+	path: string;
+}
+
+export interface RenamePathRequest {
+	from: string;
+	to: string;
+}
+
+export interface DeleteFileRequest {
+	path: string;
+	recursive?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Git cockpit
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GitFileStatus =
+	| "modified"
+	| "added"
+	| "deleted"
+	| "renamed"
+	| "copied"
+	| "untracked"
+	| "ignored"
+	| "unmerged"
+	| "typechange";
+
+export interface GitStatusEntry {
+	path: string;
+	origPath?: string;
+	staged: GitFileStatus | null;
+	unstaged: GitFileStatus | null;
+}
+
+export interface GitRepoStatus {
+	cwd: string;
+	branch: string | null;
+	upstream: string | null;
+	ahead: number;
+	behind: number;
+	detached: boolean;
+	entries: GitStatusEntry[];
+	clean: boolean;
+}
+
+export interface GitDiffResponse {
+	path: string;
+	patch: string;
+	binary: boolean;
+}
+
+export interface StageRequest {
+	cwd: string;
+	paths: string[];
+}
+
+export interface DiscardRequest {
+	cwd: string;
+	paths: string[];
+}
+
+export interface CommitRequest {
+	cwd: string;
+	message: string;
+	amend?: boolean;
+}
+
+export interface CommitResult {
+	sha: string;
+	summary: string;
+}
+
+export interface CommitLogEntry {
+	sha: string;
+	shortSha: string;
+	author: string;
+	authorEmail: string;
+	date: string;
+	subject: string;
+}
+
+export interface GitLogResponse {
+	commits: CommitLogEntry[];
+}
+
+export interface GitBranch {
+	name: string;
+	current: boolean;
+	remote: boolean;
+	upstream: string | null;
+}
+
+export interface GitBranchesResponse {
+	branches: GitBranch[];
+}
+
+export interface CheckoutBranchRequest {
+	cwd: string;
+	branch: string;
+	create?: boolean;
+}
+
+export interface GitSyncResult {
+	ok: true;
+	summary: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GitHub-native
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GitHubStatusResponse {
+	configured: boolean;
+}
+
+export interface GitHubViewer {
+	login: string;
+	name: string | null;
+	avatarUrl: string;
+}
+
+export interface GitHubRepoSummary {
+	id: number;
+	fullName: string;
+	name: string;
+	owner: string;
+	private: boolean;
+	description: string | null;
+	defaultBranch: string;
+	pushedAt: string;
+	updatedAt: string;
+	stargazersCount: number;
+	cloneUrl: string;
+	sshUrl: string;
+	fork: boolean;
+	archived: boolean;
+	localPath?: string;
+}
+
+export interface ListGitHubReposResponse {
+	repos: GitHubRepoSummary[];
+}
+
+export interface CloneRepoRequest {
+	fullName: string;
+	intoRoot?: string;
+}
+
+export interface CloneRepoResponse {
+	path: string;
+	alreadyExisted: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent-config manager
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AgentFileEntry {
+	name: string;
+	path: string;
+	kind: "file" | "dir";
+	sizeBytes: number | null;
+	modifiedAt: string | null;
+	isDatabase: boolean;
+}
+
+export interface ListAgentDirResponse {
+	path: string;
+	entries: AgentFileEntry[];
+}
+
+export interface ReadAgentFileResponse {
+	path: string;
+	content: string;
+}
+
+export type AgentImportMode = "merge" | "full-reset";
+export type AgentImportChange = "add" | "modify" | "remove";
+
+export interface AgentImportPlanEntry {
+	path: string;
+	change: AgentImportChange;
+	isDatabase: boolean;
+}
+
+export interface AgentImportPlan {
+	stagingId: string;
+	entries: AgentImportPlanEntry[];
+	addedCount: number;
+	modifiedCount: number;
+	removedCount: number;
+	touchesDatabase: boolean;
+}
+
+export interface AgentImportApplyResponse {
+	backupPath: string;
+	appliedPath: string;
+	restart: RestartServerResponse;
+}
+
+export interface AgentConfigBackup {
+	name: string;
+	path: string;
+	createdAt: string;
+}
+
+export interface ListAgentBackupsResponse {
+	backups: AgentConfigBackup[];
+}
