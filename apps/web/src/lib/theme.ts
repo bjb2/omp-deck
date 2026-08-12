@@ -90,14 +90,17 @@ function readStoredTheme(): ThemeId | undefined {
 	}
 }
 
+/**
+ * Aurora is the deck's actual design — not one option among several — so it
+ * is the default for anyone who hasn't chosen otherwise, regardless of the
+ * visitor's OS color-scheme preference. An earlier version of this function
+ * gated the flagship look behind a dark-OS preference, which meant most
+ * first-time visitors (light is still the common OS default) never saw it.
+ * A saved choice in `localStorage` — including an explicit choice of Paper —
+ * always wins; this only decides what a *first* visit looks like.
+ */
 function systemPreferredTheme(): ThemeId {
-	// Aurora is the flagship dark look — a first-time visitor with a dark OS
-	// preference and no saved choice lands there rather than on the older
-	// Slate default.
-	if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-		return "aurora";
-	}
-	return "paper";
+	return "aurora";
 }
 
 function activeAttribute(): ThemeId {
