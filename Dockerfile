@@ -34,6 +34,7 @@ COPY packages/protocol/package.json packages/protocol/
 COPY apps/web/package.json apps/web/
 COPY apps/server/package.json apps/server/
 COPY apps/bridges/telegram/package.json apps/bridges/telegram/
+COPY apps/gholam/package.json apps/gholam/
 RUN bun install --frozen-lockfile
 
 # Web sources + protocol (referenced as workspace:*).
@@ -62,6 +63,7 @@ COPY packages/protocol/package.json packages/protocol/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY apps/bridges/telegram/package.json apps/bridges/telegram/
+COPY apps/gholam/package.json apps/gholam/
 
 RUN bun install --frozen-lockfile --production
 
