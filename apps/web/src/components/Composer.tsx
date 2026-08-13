@@ -124,6 +124,36 @@ export function Composer() {
 					: "Enter plan mode — agent reads + proposes only (or Shift+Tab)",
 				argumentHint: "[on|off]",
 			},
+			{
+				name: "ultrathink",
+				scope: "deck",
+				description: "Deep-reason the prompt — fires the active session with reasoning-effort = high.",
+				argumentHint: "<prompt>",
+			},
+			{
+				name: "workflowz",
+				scope: "deck",
+				description: "Fan out a 3-way parallel workflow (primary + critique + alternate + synthesize).",
+				argumentHint: "<prompt>",
+			},
+			{
+				name: "orchestrate",
+				scope: "deck",
+				description: "Run as an orchestrator agent — plan, delegate, synthesize.",
+				argumentHint: "<prompt>",
+			},
+			{
+				name: "login",
+				scope: "deck",
+				description: "Sign in to a provider (omni / anthropic / openai / openrouter / custom).",
+				argumentHint: "<provider> <subscription-key>",
+			},
+			{
+				name: "restart",
+				scope: "deck",
+				description: "Restart the omp-deck server.",
+				argumentHint: "",
+			},
 		],
 		[planModeEnabled],
 	);
@@ -271,6 +301,48 @@ export function Composer() {
 				if (arg === "on") setPlanMode(true);
 				else if (arg === "off") setPlanMode(false);
 				else setPlanMode(!planModeEnabled);
+				return true;
+			}
+			if (name === "ultrathink") {
+				const prompt = args.trim();
+				if (!prompt || !session) return true;
+				// v0.7+: dispatch via /api/workflows with mode=ultrathink and the active session id.
+				void fetch("/api/workflows", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ mode: "ultrathink", tasks: [{ prompt, cwd: session.cwd }] }),
+				}).catch(() => {});
+				return true;
+			}
+			if (name === "workflowz" || name === "orchestrate") {
+				const prompt = args.trim();
+				if (!prompt || !session) return true;
+				void fetch("/api/workflows", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ mode: name, tasks: [{ prompt, cwd: session.cwd }] }),
+				}).catch(() => {});
+				return true;
+			}
+			if (name === "restart") {
+				void fetch("/api/system/lifecycle", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ action: "restart" }),
+				}).catch(() => {});
+				return true;
+			}
+			if (name === "login") {
+				// /login <provider> <key> — forward to /api/auth/login.
+				const parts = args.trim().split(/\s+/);
+				const provider = parts[0];
+				const key = parts.slice(1).join(" ");
+				if (!provider || !key) return true;
+				void fetch("/api/auth/login", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ provider, subscriptionKey: key }),
+				}).catch(() => {});
 				return true;
 			}
 			return false;

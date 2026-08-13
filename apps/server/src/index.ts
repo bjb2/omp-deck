@@ -28,6 +28,7 @@ import {
 } from "./auth/guard.ts";
 import { WsHub, type ConnectionData } from "./ws.ts";
 import { MarketplaceService } from "./marketplace-service.ts";
+import { marketplaceExtras } from "./marketplace-extras.ts";
 import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { SkillsService } from "./skills-service.ts";
 import { startSkillsWatcher } from "./skills-watcher.ts";
@@ -49,6 +50,9 @@ const log = logger("server");
 
 async function main(): Promise<void> {
 	const config = loadConfig();
+	// Wire the SSL CA bundle BEFORE anything that may clone a git source
+	// (marketplace plugin install, MCP server install, starter skills).
+	marketplaceExtras.applySslFix();
 	log.info(`omp-deck server starting`, {
 		host: config.host,
 		port: config.port,

@@ -40,6 +40,8 @@ import { buildGitRouter } from "./routes-git.ts";
 import { buildGitHubRouter } from "./routes-github.ts";
 import { buildAgentConfigRouter } from "./routes-agent-config.ts";
 import { buildPushRouter } from "./routes-push.ts";
+import { buildHarnessRouter } from "./routes-harness.ts";
+import { startCustomProvidersWatcher } from "./custom-providers.ts";
 import type { RoutinesRunner } from "./routines-runner.ts";
 import type { BridgeSupervisor } from "./bridge-supervisor.ts";
 import type { MarketplaceService } from "./marketplace-service.ts";
@@ -267,6 +269,8 @@ export function buildRouter(
 	app.route("/auth", buildAuthRouter(getAuthConfig(), () => config.publicUrl));
 	app.route("/onboarding", buildOnboardingRouter());
 
+	app.route("/", buildHarnessRouter(bridge));
+	startCustomProvidersWatcher();
 	return app;
 }
 

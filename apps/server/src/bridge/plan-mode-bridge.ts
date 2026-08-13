@@ -50,10 +50,13 @@ import type { AgentToolResult } from "@oh-my-pi/pi-coding-agent/extensibility/ex
 import { resolveLocalUrlToPath } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import {
 	type PlanApprovalDetails,
-	renameApprovedPlanFile,
+	humanizePlanTitle,
 	resolvePlanTitle,
 } from "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan";
-import { type ResolveToolDetails, runResolveInvocation } from "@oh-my-pi/pi-coding-agent/tools/resolve";
+import { type ResolveDetails, queueResolveHandler } from "@oh-my-pi/pi-coding-agent/tools/resolve";
+// v17 renamed `ResolveToolDetails` → `ResolveDetails`. Local alias keeps
+// the rest of the file readable without renaming every reference.
+type ResolveToolDetails = ResolveDetails;
 import { ToolError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import type {
 	PendingPlanApprovalWire,
@@ -383,11 +386,17 @@ export class PlanModeBridge {
 	 * content + details; the deferred `session.prompt(..., followUp)` then
 	 * starts a fresh turn that executes the approved plan.
 	 */
-	#handlePlanResolve(input: unknown): Promise<AgentToolResult<ResolveToolDetails>> {
-		return runResolveInvocation(input as Parameters<typeof runResolveInvocation>[0], {
-			sourceToolName: "plan_approval",
-			label: "Plan ready for approval",
-			apply: async (_reason, extra) => {
+	#handlePlanResolve(_input: unknown): void {
+		// v17 surface: `queueResolveHandler` registers an apply/reject handler
+		// against a session; the agent's `write xd://resolve` resolves into
+		// the registered `apply(reason)` callback. We install one immediately;
+		// the agent's follow-up `write xd://resolve` triggers it.
+		queueResolveHandler(
+			this.session as unknown as Parameters<typeof queueResolveHandler>[0],
+			{
+				sourceToolName: "plan_approval",
+				label: "Plan ready for approval",
+				apply: async (_reason: string) => {
 				if (!this.enabled) {
 					throw new ToolError("Plan mode is not active.");
 				}
@@ -400,7 +409,7 @@ export class PlanModeBridge {
 				}
 
 				const normalized = resolvePlanTitle({
-					suppliedTitle: extra?.title,
+					suppliedTitle: undefined,
 					planContent,
 					planFilePath: this.planFilePath,
 				});
@@ -452,7 +461,6 @@ export class PlanModeBridge {
 						],
 						details: {
 							planFilePath: planFilePathAtApproval,
-							finalPlanFilePath: suggestedFinalPath,
 							title: normalized.title,
 							planExists: true,
 						} satisfies PlanApprovalDetails,
@@ -470,12 +478,9 @@ export class PlanModeBridge {
 
 				const finalPlanFilePath = sanitizeFinalPath(userResponse.finalPath) ?? suggestedFinalPath;
 
-				await renameApprovedPlanFile({
-					planFilePath: planFilePathAtApproval,
-					finalPlanFilePath,
-					getArtifactsDir: this.getArtifactsDir,
-					getSessionId: this.getSessionId,
-				});
+				// v17 dropped the plan-file rename step. The plan keeps its
+				// slug-derived filename; the title now lives on the session
+				// (`humanizePlanTitle` returns the user-facing label).
 
 				this.#broadcast({
 					type: "plan_proposal_resolved",
@@ -515,7 +520,6 @@ export class PlanModeBridge {
 					],
 					details: {
 						planFilePath: planFilePathAtApproval,
-						finalPlanFilePath,
 						title: stripMdExtension(extractFileName(finalPlanFilePath)),
 						planExists: true,
 					} satisfies PlanApprovalDetails,

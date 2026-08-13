@@ -12,8 +12,8 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "15.1.7",
-		"@oh-my-pi/pi-coding-agent": "15.1.7",
+		"@oh-my-pi/pi-ai": "17.2.15",
+		"@oh-my-pi/pi-coding-agent": "17.2.15",
 		"@omp-deck/protocol": "workspace:*",
 		"croner": "^10.0.1",
 		"hono": "^4.6.14",

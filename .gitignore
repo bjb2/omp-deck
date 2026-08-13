@@ -66,3 +66,6 @@ Restart-OMP-Deck.cmd
 agent-defaults/**/*.db
 agent-defaults/mcp.json
 agent-defaults/models.yml
+# PowerShell-bash glob expansion occasionally surfaces the user's home directory
+# (C:\Users\PC\) as `~/` from inside a repo. Keep it out of the index.
+~/

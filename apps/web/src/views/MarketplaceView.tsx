@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { marketplaceApi } from "@/lib/marketplace-api";
+import { marketplaceExtrasApi, type ScoredMarketplaceEntry } from "@/lib/marketplace-api";
 import { cn } from "@/lib/utils";
 
 type ScopeFilter = "all" | "installed" | "available";
@@ -26,6 +27,12 @@ export function MarketplaceView() {
 	const [busyId, setBusyId] = useState<string | undefined>();
 	const [refreshing, setRefreshing] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
+	const [featured, setFeatured] = useState<ScoredMarketplaceEntry[]>([]);
+	const [popular, setPopular] = useState<ScoredMarketplaceEntry[]>([]);
+	useEffect(() => {
+		void marketplaceExtrasApi.featured(8).then((r) => setFeatured(r.results)).catch(() => setFeatured([]));
+		void marketplaceExtrasApi.popular(12).then((r) => setPopular(r.results)).catch(() => setPopular([]));
+	}, [data]);
 
 	const refresh = useCallback(async (): Promise<void> => {
 		try {
@@ -174,7 +181,53 @@ export function MarketplaceView() {
 									No catalog entries match the current filters.
 								</div>
 							) : null}
-							<div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+							{(featured.length > 0 || popular.length > 0) ? (
+						<div className="mb-3 space-y-3">
+							{featured.length > 0 ? (
+								<section className="rounded-md border border-accent/30 bg-accent-soft/40 p-3">
+									<div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-meta text-accent">
+										<span>Featured</span>
+										<span className="text-ink-3">· curated picks</span>
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{featured.map((entry) => (
+											<button
+												key={entry.id}
+												type="button"
+												onClick={() => setSelectedId(entry.id)}
+												className="rounded-md border border-line bg-paper px-2.5 py-1 text-left text-xs hover:border-accent"
+											>
+												<div className="font-medium">{entry.name}</div>
+												<div className="text-ink-3 text-2xs">{entry.marketplace}</div>
+											</button>
+										))}
+									</div>
+								</section>
+							) : null}
+							{popular.length > 0 ? (
+								<section className="rounded-md border border-line bg-paper-2 p-3">
+									<div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-meta text-ink-3">
+										<span>Popular</span>
+										<span className="text-ink-3">· this week</span>
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{popular.map((entry) => (
+											<button
+												key={entry.id}
+												type="button"
+												onClick={() => setSelectedId(entry.id)}
+												className="rounded-md border border-line bg-paper px-2.5 py-1 text-left text-xs hover:border-accent"
+											>
+												<div className="font-medium">{entry.name}</div>
+												<div className="text-ink-3 text-2xs">{entry.marketplace}</div>
+											</button>
+										))}
+									</div>
+								</section>
+							) : null}
+						</div>
+					) : null}
+					<div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
 								{filtered.map((entry) => (
 									<EntryCard
 										key={entry.id}

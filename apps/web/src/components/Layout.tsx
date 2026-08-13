@@ -4,6 +4,7 @@ import { FoldVertical, Menu, PanelRight, UnfoldVertical, X } from "lucide-react"
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { ConnectionIndicator } from "./ConnectionIndicator";
+import { GholamOverlay } from "./GholamOverlay";
 
 interface Props {
 	sidebar: ReactNode;
@@ -36,6 +37,7 @@ export function Layout({ sidebar, main, inspector, topBar }: Props) {
 
 	return (
 		<div className="flex h-full w-full flex-col bg-paper text-ink">
+			<GholamOverlay />
 			<header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-paper px-3">
 				<button
 					type="button"

@@ -205,3 +205,9 @@ export class MarketplaceService {
 		await mgr.setPluginEnabled(id, enabled, scope);
 	}
 }
+
+let _instance: MarketplaceService | undefined;
+export function getMarketplace(): MarketplaceService {
+	if (!_instance) _instance = new MarketplaceService();
+	return _instance;
+}

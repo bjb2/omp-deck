@@ -11,6 +11,8 @@ import { SkillsView } from "./views/SkillsView";
 import { SettingsView } from "./views/SettingsView";
 import { IntegrationsView } from "./views/IntegrationsView";
 import { OnboardingView } from "./views/OnboardingView";
+import { WorkflowsView } from "./views/WorkflowsView";
+import { GholamView } from "./views/GholamView";
 import { onboardingApi } from "./lib/onboarding-api";
 
 /**
@@ -82,6 +84,8 @@ const router = createBrowserRouter([
 			},
 			{ path: "/tasks", element: <TasksView /> },
 			{ path: "/routines", element: <RoutinesView /> },
+			{ path: "/workflows", element: <WorkflowsView /> },
+			{ path: "/gholam", element: <GholamView /> },
 			{ path: "/routines/:id/runs/:runId", element: <RunDetailView /> },
 			{ path: "/inbox", element: <InboxView /> },
 			{ path: "/marketplace", element: <MarketplaceView /> },
