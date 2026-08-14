@@ -41,6 +41,11 @@ const slashCommandsCache = new Map<string, SlashCommand[]>();
 
 export function Composer() {
 	const session = useStore(selectActiveSession);
+	// The session *snapshot* only exists once the WS has delivered it. The
+	// selected id survives offline (persisted across reloads), so keying the
+	// composer off the id keeps it usable with the server down: the prompt
+	// still autosaves and the send is queued to IndexedDB for replay.
+	const activeId = useStore((s) => s.activeId);
 	const sendPrompt = useStore((s) => s.sendPrompt);
 	const abort = useStore((s) => s.abort);
 	const clearQueue = useStore((s) => s.clearQueue);
@@ -55,7 +60,7 @@ export function Composer() {
 	// in-progress text. The "global" key (active session id) is the natural
 	// namespace — falls back to a literal when no session is selected so the
 	// draft still survives a session-less cold reload.
-	const sessionId = session?.sessionId ?? "global";
+	const sessionId = session?.sessionId ?? activeId ?? "global";
 	const draftKey = `composer:${sessionId}`;
 	const imagesKey = `composer-images:${sessionId}`;
 	useDraft<string>(draftKey, draft, setDraft);
@@ -199,7 +204,7 @@ export function Composer() {
 	}, [filteredSlash]);
 
 	const slashOpen = slashQuery !== null && filteredSlash.length > 0;
-	const disabled = !session;
+	const disabled = !session && !activeId;
 	const isBusy = session?.status === "streaming" || session?.status === "retrying";
 
 	const autoresize = useCallback((): void => {

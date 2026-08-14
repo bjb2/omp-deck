@@ -378,6 +378,11 @@ export const useStore = create<StoreState>()(
 				}
 			} catch (err) {
 				console.warn("listSessions failed", err);
+				// Offline / server restarting: keep the restored `activeId`
+				// so the composer stays usable and the draft keeps saving.
+				// The WS `connect` path re-subscribes once the socket is back.
+				const restored = get().activeId;
+				if (restored) get().selectSession(restored);
 			}
 		},
 

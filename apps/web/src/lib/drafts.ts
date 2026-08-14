@@ -150,31 +150,62 @@ export function useDraft<T>(
 	// unhydrated while the write effect happily persisted the empty
 	// initial value over the saved draft.
 	const hydratedKeyRef = useRef<string | null>(null);
+	// `typedDuringRead` flips true the moment a keystroke lands before
+	// the IDB read settles, so the hydration callback can defer to the
+	// user's live input instead of clobbering it with stale state. This
+	// is the difference between "huge prompt survives network death" and
+	// "huge prompt gets silently overwritten by the previous draft on
+	// every reload that hits a slow IDB".
+	const typedDuringReadRef = useRef(false);
+	const baselineRef = useRef(value);
 	const timerRef = useRef<TimeoutHandle | null>(null);
 	const latestRef = useRef(value);
 	latestRef.current = value;
 
 	// Hydrate once per key. On hydration we deliberately overwrite the
 	// caller's `value` via `setValue` so the textarea reflects the saved
-	// draft. Errors are swallowed upstream; we never throw into render.
+	// draft — UNLESS the user already typed during the in-flight read,
+	// in which case the live typing wins. After we unblock writes we
+	// force one synchronous mirror + IDB push of whatever `latestRef`
+	// now holds, so any pre-hydration keystrokes land even when no
+	// `value`-change has fired the debounce yet.
 	useEffect(() => {
 		if (hydratedKeyRef.current === key) return;
+		baselineRef.current = value;
+		typedDuringReadRef.current = false;
 		let alive = true;
 		void loadDraft<T>(key).then((saved) => {
 			if (!alive) return;
-			if (saved !== null && saved !== undefined) {
+			if (saved !== null && saved !== undefined && !typedDuringReadRef.current) {
 				setValue(saved);
 				latestRef.current = saved;
 			}
 			// Only unblock writes once the read has settled, so the
 			// initial empty value can never race ahead of the restore.
 			hydratedKeyRef.current = key;
+			if (typedDuringReadRef.current) {
+				// User typed before we resolved — push the live snapshot
+				// through both storages NOW so neither the mirror nor
+				// IDB remain stale until the debounce fires.
+				mirrorToLocalStorage(key, latestRef.current);
+				void saveDraft(key, latestRef.current);
+			}
 		});
 		return () => {
 			alive = false;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [key]);
+
+	// Mark "user typed during the read" the first time `value` diverges
+	// from `baselineRef` before hydration completes. The write-effect
+	// below still no-ops (gate on `hydratedKeyRef`), but the hydration
+	// callback can now see the flag and choose not to clobber.
+	useEffect(() => {
+		if (hydratedKeyRef.current === key) return;
+		if (baselineRef.current !== value) typedDuringReadRef.current = true;
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [key, value]);
 
 	// Debounced write on every value change, suppressed until the key has
 	// hydrated. We capture the latest value via the ref so the debounced
