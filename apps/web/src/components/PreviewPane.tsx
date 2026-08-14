@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
+import { ExternalLink, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { GenuiStack } from "@/lib/genui/GenuiRenderer";
 import type { GenNode } from "@/lib/genui/components";
 import { cn } from "@/lib/utils";
@@ -80,6 +81,14 @@ export function PreviewPane({ route, frames, label = "Preview" }: PreviewPanePro
 		>
 			<div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-2">
 				<span className="meta">{label}</span>
+				<Link
+					to={`/preview/${encodeURIComponent(route)}`}
+					title="Open full-page preview"
+					aria-label="Open full-page preview"
+					className="inline-flex h-5 w-5 items-center justify-center rounded text-ink-3 hover:bg-paper-3 hover:text-ink"
+				>
+					<ExternalLink className="h-3 w-3" />
+				</Link>
 				<div className="ml-auto flex items-center gap-1" role="radiogroup" aria-label="Preview mode">
 					{MODES.map((m) => {
 						const Icon = m.icon;

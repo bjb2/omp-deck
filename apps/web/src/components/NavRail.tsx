@@ -2,11 +2,16 @@ import {
 	BookOpen,
 	Bot as GholamIcon,
 	Clock,
+	Compass,
 	GitMerge,
 	FolderGit2,
 	LayoutDashboard,
+	LayoutGrid,
 	KanbanSquare,
+	Library,
 	MessagesSquare,
+	Plug,
+	SlidersHorizontal,
 	Terminal,
 	Settings,
 	Sparkles,
@@ -14,13 +19,8 @@ import {
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
-// Remote-workstation nav. Only the surfaces needed to drive an app build
-// remotely: chat (drive the agent), shell (run/test/git/cleanup), files
-// (browse/edit the workspace), tasks (work tracking), routines (scheduled
-// jobs), skills (reusable agent prompts), gholam (async twin), workflows
-// (parallel dispatch). KB / Prompts / Inbox / Integrations / Marketplace
-// / Agent Config remain reachable by URL — none of them are removed, just
-// out of the rail.
+// Remote-workstation nav. Every routed surface gets an entry here so nothing
+// is reachable only by typing a URL — see docs audit in the pages-audit PR.
 const ITEMS: ReadonlyArray<{
 	to: string;
 	label: string;
@@ -30,12 +30,17 @@ const ITEMS: ReadonlyArray<{
 	{ to: "/chat", label: "Chat", icon: MessagesSquare },
 	{ to: "/shell", label: "Shell", icon: Terminal },
 	{ to: "/explorer", label: "Explorer", icon: FolderGit2 },
+	{ to: "/agent-config", label: "Agent Config", icon: SlidersHorizontal },
 	{ to: "/tasks", label: "Tasks", icon: KanbanSquare },
 	{ to: "/routines", label: "Routines", icon: Clock },
 	{ to: "/workflows", label: "Workflows", icon: GitMerge },
 	{ to: "/skills", label: "Skills", icon: Sparkles },
 	{ to: "/gholam", label: "Gholam", icon: GholamIcon },
 	{ to: "/prompts/library", label: "Prompts", icon: BookOpen },
+	{ to: "/prompts/discover", label: "Discover", icon: Compass },
+	{ to: "/kb", label: "Knowledge Base", icon: Library },
+	{ to: "/integrations", label: "Integrations", icon: Plug },
+	{ to: "/studio", label: "Studio", icon: LayoutGrid },
 ];
 
 /**
