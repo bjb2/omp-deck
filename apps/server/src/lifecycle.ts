@@ -15,6 +15,7 @@
  * in-flight sessions a chance to flush their journal before the process goes.
  */
 import { logger } from "./log.ts";
+import { resolveBunExecutable } from "./runtime-bun.ts";
 
 const log = logger("lifecycle");
 
@@ -93,13 +94,34 @@ export const lifecycle = {
 function scheduleSelf(reason: string): void {
 	log.info(`lifecycle: scheduling self-restart (${reason})`);
 	lastAction = { action: "restart", at: now(), reason };
+	// Spawn-replace: detach a new bun process with the same argv, then exit.
+	// This works in dev mode (plain `bun src/index.ts`) and in production
+	// without a supervisor — no wrapper script required. Mirrors the
+	// `scheduleRestart(server)` path in index.ts so the two restart entry
+	// points (POST /api/system/lifecycle vs /api/restart via routes.ts)
+	// behave identically.
+	const cmd = [resolveBunExecutable(), ...process.argv.slice(1)];
+	const cwd = process.cwd();
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+	);
 	setTimeout(() => {
-		process.exit(0);
-	}, 250);
-	// The actual restart is performed by the launcher / `Start-OMP-Deck.*`
-	// script that owns the process. We exit with code 0 so the wrapper knows
-	// to relaunch us. On Windows, bun's `--hot` does this automatically; on
-	// POSIX, the wrapper script restarts on exit code 0.
+		try {
+			const child = Bun.spawn({
+				cmd,
+				cwd,
+				env,
+				stdin: "ignore",
+				stdout: "inherit",
+				stderr: "inherit",
+				detached: true,
+			});
+			child.unref();
+		} catch (err) {
+			log.warn(`lifecycle: spawn-replace failed; falling back to bare exit`, err);
+		}
+		setTimeout(() => process.exit(0), 80);
+	}, 100);
 }
 
 function scheduleShutdown(): void {

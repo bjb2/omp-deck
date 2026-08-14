@@ -11,6 +11,7 @@
  * overlay exists because the user asked for a playful twin.
  */
 import { useEffect, useRef, useState } from "react";
+import { useStore } from "@/lib/store";
 
 interface HeartbeatFrame {
 	type: "heartbeat";
@@ -110,10 +111,16 @@ export function GholamOverlay(): JSX.Element {
 		setLog((prev) => [...prev, { at, text: trimmed }]);
 		setInput("");
 		try {
+		// `process` is undefined in the browser bundle — pulling the user's
+		// default cwd from the store instead. The server's /gholam/priorities
+		// route accepts cwd=null and resolves it to OMP_DECK_DEFAULT_CWD /
+		// process.cwd() server-side, so we can also fall back to "" and let
+		// the server fill it in.
+		const cwd = useStore.getState().defaultCwd || "";
 			await fetch("/api/gholam/priorities", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ priorities: [{ label: trimmed, cwd: process.cwd(), scope: "session" }] }),
+			body: JSON.stringify({ priorities: [{ label: trimmed, cwd, scope: "session" }] }),
 			});
 			setLog((prev) => [...prev, { at: new Date().toLocaleTimeString(), text: "→ queued for Gholam" }]);
 		} catch (err) {

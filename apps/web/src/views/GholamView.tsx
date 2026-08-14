@@ -17,6 +17,7 @@ import { Heart, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/Button";
 import { DeployStatusBadge } from "@/components/DeployStatusBadge";
+import { useStore } from "@/lib/store";
 
 interface GholamState {
 	running: boolean;
@@ -79,7 +80,10 @@ export function GholamView(): JSX.Element {
 
 	function addPriority(): void {
 		const label = draftLabel.trim();
-		const cwd = draftCwd.trim() || process.cwd();
+		// `process` is undefined in the browser bundle. Fall back to the user's
+		// default cwd from the store; the server's /gholam/priorities route
+		// resolves empty cwd to OMP_DECK_DEFAULT_CWD / process.cwd() server-side.
+		const cwd = draftCwd.trim() || useStore.getState().defaultCwd || "";
 		if (!label) return;
 		const next: Priority = { label, cwd, scope: draftScope };
 		setPriorities((prev) => [...prev, next]);
