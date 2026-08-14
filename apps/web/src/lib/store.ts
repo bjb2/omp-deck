@@ -985,15 +985,21 @@ case "discovery_added":
 
 case "mcp_health":
 		set((s) => {
-		// Server pushes one snapshot per probed server; union by id into the
-		// cached response so the strip re-renders without polling.
+	// Server pushes a single snapshot per probe cycle containing all probed
+	// servers; union each entry by `id` into the cached response so the
+	// strip re-renders without polling. `probedAt` is the max across the
+	// batch so the relative-time tooltip stays coherent under partial loss.
 		const prev = s.mcpHealth.response;
 		const byId = new Map<string, McpHealthStatus>();
 		for (const row of prev?.status ?? []) byId.set(row.id, row);
-		byId.set(frame.status.id, frame.status);
+	let latestProbe = prev?.probedAt ?? "";
+	for (const row of frame.status) {
+		byId.set(row.id, row);
+		if (row.probedAt > latestProbe) latestProbe = row.probedAt;
+	}
 		const next: McpHealthResponse = {
 			status: Array.from(byId.values()),
-			probedAt: frame.status.probedAt,
+		probedAt: latestProbe,
 			};
 		return { mcpHealth: { response: next, lastReceivedAtMs: Date.now() } };
 		});
