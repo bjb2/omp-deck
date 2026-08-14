@@ -54,7 +54,7 @@ WORKDIR /app
 # ~/.omp/agent directory as a single archive; shelling out avoids pulling in
 # a JS zip library for something the OS already does well.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git zip unzip \
+	&& apt-get install -y --no-install-recommends ca-certificates git zip unzip \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Re-install with only server-relevant workspace (still pulls protocol).
