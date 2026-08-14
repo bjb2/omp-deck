@@ -83,6 +83,12 @@ export const marketplaceApi = {
 	removeMarketplace(name: string): Promise<{ ok: boolean }> {
 		return req<{ ok: boolean }>(`/marketplaces/${encodeURIComponent(name)}`, { method: "DELETE" });
 	},
+	setPluginEnabled(id: string, enabled: boolean, scope?: "user" | "project"): Promise<{ ok: boolean; id: string; enabled: boolean }> {
+		return req<{ ok: boolean; id: string; enabled: boolean }>(`/marketplace/plugins/${encodeURIComponent(id)}/enabled`, {
+			method: "POST",
+			body: JSON.stringify({ enabled, ...(scope ? { scope } : {}) }),
+		});
+	},
 };
 
 

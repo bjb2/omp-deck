@@ -1,5 +1,22 @@
 import type { ClientFrame, ServerFrame } from "@omp-deck/protocol";
 import * as idbQueue from "./idb-queue";
+import { replayQueuedOps } from "./prompts-api";
+
+/** ClientFrame kinds that mutate server state and therefore survive a tab
+ *  close while offline. `subscribe` is deliberately excluded — it is
+ *  reconnect-derived state the server re-derives on every connect, so
+ *  persisting it would just produce duplicate subscriptions. The list is
+ *  ordered by frequency of use; the order does not affect FIFO drain. */
+const PERSISTED_FRAME_TYPES = new Set<ClientFrame["type"]>([
+	"prompt",
+	"edit_queued",
+	"cancel_queued",
+	"clear_queue",
+	"abort",
+	"plan_response",
+	"ext_ui_dialog_response",
+	"set_plan_mode",
+]);
 
 type Listener = (frame: ServerFrame) => void;
 type StatusListener = (status: WsStatus) => void;
@@ -33,6 +50,10 @@ export class WsClient {
 			this.setStatus("open");
 			this.retryDelay = 500;
 			this.flushQueue();
+			// Co-drain any queued HTTP ops (create/update/import) so a
+			// single reconnect unifies both transports. Errors are logged
+			// inside the helper; we don't gate the WS flush on HTTP success.
+			void replayQueuedOps();
 		});
 
 		sock.addEventListener("message", (ev) => {
@@ -75,11 +96,12 @@ export class WsClient {
 		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
 			this.socket.send(JSON.stringify(frame));
 		} else {
-			// Persist prompt frames to IndexedDB so the user's typing
-			// survives a full tab close while offline. Other queued
-			// frame types stay in-memory; the WS reconnects within
-			// the backoff window and `flushQueue` will drain them.
-			if (frame.type === "prompt") {
+			// Persist mutating frames to IndexedDB so the user's intent
+			// survives a full tab close while offline. Read-only frames
+			// (e.g. `subscribe`) stay in-memory; the WS reconnects within
+			// the backoff window and `flushQueue` will drain them in FIFO
+			// order (IDB cursor + in-memory queue tail).
+			if (PERSISTED_FRAME_TYPES.has(frame.type)) {
 				void idbQueue.enqueue(frame as unknown as { id?: string; [k: string]: unknown });
 			}
 			this.queue.push(frame);

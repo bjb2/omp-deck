@@ -263,7 +263,7 @@ export function TasksView() {
 		setPendingDraft({
 			text: `# ${task.title}\n\n${task.body}`.trim(),
 		});
-		navigate("/");
+		navigate("/chat");
 	}
 
 	return (

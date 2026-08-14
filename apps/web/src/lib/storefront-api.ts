@@ -16,6 +16,11 @@ interface StorefrontItemResponse {
 	item: StoreItem;
 }
 
+interface StorefrontInstalledResponse {
+	installed: { plugins: string[]; skills: string[]; mcps: string[] };
+	errors?: Record<string, string>;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(`${BASE}${path}`, {
 		headers: { "Content-Type": "application/json" },
@@ -57,5 +62,11 @@ export const storefrontApi = {
 	},
 	mcpHealth(): Promise<McpHealthResponse> {
 		return safe({ status: [], probedAt: new Date(0).toISOString() }, () => req<McpHealthResponse>("/mcp/health"));
+	},
+	installed(): Promise<StorefrontInstalledResponse> {
+		return safe(
+			{ installed: { plugins: [], skills: [], mcps: [] } },
+			() => req<StorefrontInstalledResponse>("/storefront/installed"),
+		);
 	},
 };

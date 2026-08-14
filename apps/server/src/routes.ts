@@ -49,9 +49,11 @@ import { buildMcpInstallRouter } from "./routes-mcp-install.ts";
 import { buildSkillsInstallRouter } from "./routes-skills-install.ts";
 import { buildStorefrontInstalledRouter } from "./routes-storefront-installed.ts";
 import { buildGholamChatsRouter } from "./routes-gholam-chats.ts";
+import { buildRoutesOverview } from "./routes-overview.ts";
 import { buildLLMRouter } from "./routes-llm.ts";
 import { buildGenuiRouter } from "./routes-genui.ts";
 import { buildPreviewRouter } from "./routes-preview.ts";
+import { buildOpenshipRouter } from "./routes-openship.ts";
 import { getMcpHealthProbe } from "./mcp-health.ts";
 import { buildMcpHealthRouter } from "./routes-mcp-health.ts";
 import { startCustomProvidersWatcher } from "./custom-providers.ts";
@@ -299,6 +301,7 @@ export function buildRouter(
 	// flat under "/gholam/chats" so the legacy "/api/gholam/*" control
 	// surface in buildHarnessRouter stays conflict-free.
 	app.route("/gholam/chats", buildGholamChatsRouter());
+	app.route("/", buildRoutesOverview({ config }));
 	// Typed LLM registry — §2. GET /api/llm/providers + POST /api/llm/test.
 	app.route("/llm", buildLLMRouter());
 	// §3 + §4 of docs/GENERATIVE.md — generative UI stream + pre-update
@@ -307,6 +310,7 @@ export function buildRouter(
 	// declare leaf paths so no overlap with the ones above.
 	app.route("/", buildGenuiRouter());
 	app.route("/", buildPreviewRouter());
+	app.route("/", buildOpenshipRouter());
 	startCustomProvidersWatcher();
 	return app;
 }

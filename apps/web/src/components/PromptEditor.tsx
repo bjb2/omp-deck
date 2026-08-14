@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Tag, Variable } from "lucide-react";
 
 import type { Prompt } from "@omp-deck/protocol";
 
 import { Markdown } from "@/lib/markdown";
+import { loadDraft, saveDraft, clearDraft } from "@/lib/drafts";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -17,12 +18,30 @@ interface Props {
 }
 
 /**
+ * Envelope stored in IDB alongside the raw prompt snapshot. Lets the
+ * hydrate step compare the local draft's wall-clock timestamp against
+ * the server's `savedAt` so a reload never overwrites a fresher server
+ * copy with stale local edits.
+ */
+interface PromptDraftEnvelope {
+	value: Prompt;
+	savedAt: number;
+}
+
+/**
  * Prompt body editor + live preview. Title and category live in the parent
  * so this component focuses on the markdown body + variable chip readout.
  *
  * On every `value.body` change we recompute `variables` (passed in from the
  * parent which owns the source-of-truth). Saving is debounced in the parent
  * via the `onCommit` callback fired on blur / Cmd+Enter.
+ *
+ * Offline autosave: every keystroke is mirrored to IDB (debounced) under
+ * `prompt:<id>`. On mount, if the local envelope's `savedAt` is newer
+ * than the server's `savedAt`, the local fields are forwarded via
+ * `onChange` so the editor reflects the user's offline work. The local
+ * draft is cleared when the server's `savedAt` ticks past the local
+ * write timestamp (i.e. a successful PUT landed).
  */
 export function PromptEditor({
 	value,
@@ -37,6 +56,66 @@ export function PromptEditor({
 	const [title, setTitle] = useState(value.title);
 	const [category, setCategory] = useState(value.category);
 	const [tags, setTags] = useState((value.tags ?? []).join(", "));
+
+	const draftKey = `prompt:${value.id}`;
+
+	// One-shot hydrate on mount / id change. If the local envelope is
+	// newer than the server's `savedAt`, dispatch `onChange` so the parent
+	// re-renders with the user's offline edits. Errors are swallowed
+	// inside `loadDraft`; we never throw into render.
+	useEffect(() => {
+		let cancelled = false;
+		void loadDraft<PromptDraftEnvelope>(draftKey).then((saved) => {
+			if (cancelled || saved === null) return;
+			if (saved.savedAt <= (savedAt ?? 0)) return;
+			const snapshot = saved.value;
+			const patch: Partial<Prompt> = {};
+			if (snapshot.title !== value.title) patch.title = snapshot.title;
+			if (snapshot.category !== value.category) patch.category = snapshot.category;
+			if (snapshot.body !== value.body) patch.body = snapshot.body;
+			if (JSON.stringify(snapshot.tags ?? []) !== JSON.stringify(value.tags ?? [])) {
+				patch.tags = snapshot.tags;
+			}
+			if (Object.keys(patch).length > 0) onChange(patch);
+		});
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [value.id]);
+
+	// Debounced write: 300ms idle → persist the current snapshot with a
+	// fresh timestamp. Latest-value ref keeps writes from racing when the
+	// user types fast (timer always writes the freshest snapshot).
+	const latestRef = useRef<Prompt>(value);
+	latestRef.current = value;
+	const localWriteAtRef = useRef<number>(0);
+	useEffect(() => {
+		const handle = setTimeout(() => {
+			const now = Date.now();
+			localWriteAtRef.current = now;
+			void saveDraft(draftKey, {
+				value: latestRef.current,
+				savedAt: now,
+			});
+		}, 300);
+		return () => clearTimeout(handle);
+	}, [draftKey, value]);
+
+	// Clear the local draft after a successful server PUT. When the
+	// parent bumps `savedAt` to a value ≥ the local write timestamp,
+	// the offline snapshot is no longer the source of truth.
+	const lastSeenSavedAtRef = useRef<number | undefined>(savedAt);
+	useEffect(() => {
+		if (
+			savedAt !== undefined &&
+			savedAt !== lastSeenSavedAtRef.current &&
+			savedAt >= localWriteAtRef.current
+		) {
+			void clearDraft(draftKey);
+		}
+		lastSeenSavedAtRef.current = savedAt;
+	}, [draftKey, savedAt]);
 
 	// Sync down on external updates (e.g. discovery-save import).
 	useEffect(() => {

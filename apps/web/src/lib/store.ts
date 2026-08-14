@@ -307,6 +307,7 @@ export const useStore = create<StoreState>()(
 		defaultCwd: "",
 		sessions: [],
 		sessionsById: {},
+		activeId: readLastSession(),
 		subscribed: new Set<string>(),
 		toolView: { allCollapsed: false, perCard: {} },
 		tasksChangeCounter: 0,
@@ -364,6 +365,17 @@ export const useStore = create<StoreState>()(
 			try {
 				const resp: ListSessionsResponse = await api.listSessions(cwd);
 				set({ sessions: resp.sessions });
+				// A restored `activeId` (from a previous tab) is only usable
+				// while that session still exists server-side; otherwise the
+				// composer would stay wired to a dead id and silently drop
+				// prompts. Re-select it now that the list is known.
+				const restored = get().activeId;
+				if (restored && resp.sessions.some((s) => s.id === restored)) {
+					get().selectSession(restored);
+				} else if (restored) {
+					set({ activeId: undefined });
+					writeLastSession(undefined);
+				}
 			} catch (err) {
 				console.warn("listSessions failed", err);
 			}
@@ -378,6 +390,7 @@ export const useStore = create<StoreState>()(
 			get().ws?.send({ type: "subscribe", sessionId: created.sessionId });
 			get().subscribed.add(created.sessionId);
 			set({ activeId: created.sessionId });
+			writeLastSession(created.sessionId);
 			// Background-refresh sidebar to reflect the new entry.
 			void get().refreshSessions();
 			void get().refreshWorkspaces();
@@ -386,6 +399,7 @@ export const useStore = create<StoreState>()(
 
 		selectSession(id: string) {
 			set({ activeId: id });
+			writeLastSession(id);
 			if (!get().subscribed.has(id)) {
 				get().ws?.send({ type: "subscribe", sessionId: id });
 				get().subscribed.add(id);
@@ -1010,6 +1024,29 @@ case "mcp_health":
 // Selectors ────────────────────────────────────────────────────────────────
 export const selectActiveSession = (s: StoreState): SessionUi | undefined =>
 	s.activeId ? s.sessionsById[s.activeId] : undefined;
+/**
+ * Last active session id, so a reload resumes the same conversation.
+ * The key is inlined rather than hoisted into a module const: the store
+ * factory reads it during module evaluation, before a `const` declared
+ * below would be initialized (TDZ).
+ */
+function readLastSession(): string | undefined {
+	if (typeof localStorage === "undefined") return undefined;
+	const raw = localStorage.getItem("omp-deck:last-session");
+	return raw && raw.length > 0 ? raw : undefined;
+}
+
+/** Persist (or clear) the last active session id across reloads. */
+function writeLastSession(id: string | undefined): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		if (id) localStorage.setItem("omp-deck:last-session", id);
+		else localStorage.removeItem("omp-deck:last-session");
+	} catch {
+		/* private mode / quota — persistence is best-effort */
+	}
+}
+
 function readModelSelection(): { provider: string; id: string } | undefined {
 	if (typeof localStorage === "undefined") return undefined;
 	const raw = localStorage.getItem("omp-deck:model-selection");

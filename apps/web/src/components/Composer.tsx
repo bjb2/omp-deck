@@ -20,6 +20,7 @@ import { PromptSuggestions } from "@/components/PromptSuggestions";
 
 import { selectActiveSession, useStore } from "@/lib/store";
 import { useComposerHistory } from "@/lib/use-composer-history";
+import { useDraft, clearDraft } from "@/lib/drafts";
 import { cn } from "@/lib/utils";
 
 interface PendingImage extends ImageAttachment {
@@ -50,6 +51,15 @@ export function Composer() {
 	const queuedCount = session?.queuedPrompts.length ?? 0;
 	const [draft, setDraft] = useState("");
 	const [images, setImages] = useState<PendingImage[]>([]);
+	// Per-cwd draft key so users on different sessions don't see each other's
+	// in-progress text. The "global" key (active session id) is the natural
+	// namespace — falls back to a literal when no session is selected so the
+	// draft still survives a session-less cold reload.
+	const sessionId = session?.sessionId ?? "global";
+	const draftKey = `composer:${sessionId}`;
+	const imagesKey = `composer-images:${sessionId}`;
+	useDraft<string>(draftKey, draft, setDraft);
+	useDraft<PendingImage[]>(imagesKey, images, setImages);
 	const [dragOver, setDragOver] = useState(false);
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const fileRef = useRef<HTMLInputElement>(null);
@@ -581,6 +591,10 @@ export function Composer() {
 		// duplicates and ignores recall-then-send-unmodified, so we don't have
 		// to track that here.
 		if (text.length > 0) history.push(text);
+		// Clear the persisted draft on successful send so a reload doesn't
+		// resurrect sent text. Fire-and-forget — `clearDraft` swallows errors.
+		void clearDraft(draftKey);
+		void clearDraft(imagesKey);
 		setDraft("");
 		setImages([]);
 		imagesRef.current = [];

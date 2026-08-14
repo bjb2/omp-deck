@@ -105,6 +105,19 @@ export function MarketplaceView() {
 		}
 	}
 
+	async function toggleEnabled(info: { id: string; scope: "user" | "project"; enabled: boolean }): Promise<void> {
+		setBusyId(info.id);
+		setError(undefined);
+		try {
+			await marketplaceApi.setPluginEnabled(info.id, info.enabled, info.scope);
+			await refresh();
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
+			setBusyId(undefined);
+		}
+	}
+
 	async function refreshSources(): Promise<void> {
 		setRefreshing(true);
 		setError(undefined);
@@ -262,6 +275,15 @@ export function MarketplaceView() {
 										onInstall={() => void install(entry)}
 										onUninstall={() =>
 											entry.installed ? void uninstall({ id: entry.id, scope: entry.installed.scope }) : undefined
+										}
+									onToggleEnabled={() =>
+										entry.installed
+											? void toggleEnabled({
+													id: entry.id,
+													scope: entry.installed.scope,
+													enabled: entry.installed.enabled === false,
+												})
+											: undefined
 										}
 									/>
 								))}
@@ -482,6 +504,7 @@ function EntryCard({
 	onSelect,
 	onInstall,
 	onUninstall,
+	onToggleEnabled,
 }: {
 	entry: MarketplaceCatalogEntry;
 	isSelected: boolean;
@@ -489,6 +512,7 @@ function EntryCard({
 	onSelect: () => void;
 	onInstall: () => void;
 	onUninstall: () => void;
+	onToggleEnabled: () => void;
 }) {
 	const caps = [
 		entry.capabilities.commands && "cmds",
@@ -515,6 +539,23 @@ function EntryCard({
 					{entry.installed ? (
 						<>
 							<Badge tone="success">installed</Badge>
+							<button
+								type="button"
+								className={cn(
+									"rounded-md px-1.5 py-0.5 text-2xs uppercase tracking-meta transition-colors",
+									entry.installed.enabled === false
+										? "border border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
+										: "border border-line bg-paper-2 text-ink-3 hover:border-ink/30 hover:text-ink",
+								)}
+								title={entry.installed.enabled === false ? "Enable plugin" : "Disable plugin"}
+								onClick={(e) => {
+									e.stopPropagation();
+									onToggleEnabled();
+								}}
+								disabled={busy}
+							>
+								{entry.installed.enabled === false ? "Enable" : "Disable"}
+							</button>
 							<button
 								type="button"
 								className="text-ink-3 hover:text-danger"

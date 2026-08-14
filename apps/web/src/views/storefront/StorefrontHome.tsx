@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { StoreItem } from "@omp-deck/protocol";
 import { storefrontApi } from "@/lib/storefront-api";
+import { useStorefrontStore } from "@/lib/storefront-store";
 import { useStore } from "@/lib/store";
 import { FilterChips } from "./FilterChips";
 import { McpHealthStrip } from "./McpHealthStrip";
@@ -38,20 +39,46 @@ export function StorefrontHome() {
 			setTrending(t.items);
 			setFresh(n.items);
 			setLoading(false);
+			// Seed the install chip slice so the "Open" badge survives a
+			// refresh. The catalog mints ids as `<section>:<name>` for some
+			// entries (e.g. `mcps:filesystem`, see storefront-catalog.ts);
+			// the installed endpoint returns flat names. Cross-reference the
+			// fetched items by name and write the actual StoreItem ids that
+			// the button reads (`useStorefrontStore.installedAt[item.id]`).
+			// Guard against overwriting a fresh in-session install.
+			storefrontApi
+				.installed()
+				.then(({ installed }) => {
+					if (!alive) return;
+					const installedNames = new Set([
+						...installed.plugins,
+						...installed.skills,
+						...installed.mcps,
+					]);
+					if (installedNames.size === 0) return;
+					const byName = new Map<string, StoreItem[]>();
+					for (const it of [...f.items, ...t.items, ...n.items]) {
+						const arr = byName.get(it.name) ?? [];
+						arr.push(it);
+						byName.set(it.name, arr);
+					}
+					const state = useStorefrontStore.getState();
+					for (const [name, items] of byName) {
+						if (!installedNames.has(name)) continue;
+						for (const it of items) {
+							if (state.installedAt[it.id] === undefined) state.confirmInstall(it.id);
+						}
+					}
+				})
+				.catch(() => {
+					/* best-effort seed; the UI is mountable without it */
+				});
 		}
 		void load();
 		return () => {
 			alive = false;
 		};
 	}, []);
-
-	// TODO(WP): seed `useStorefrontStore.installedAt` from a per-section
-	// installed-flag endpoint. The server today exposes only the catalog
-	// (`/storefront/featured|trending|new|section/:section` in
-	// `apps/server/src/routes-storefront.ts`); no `/storefront/installed`
-	// route returns per-section installed ids. Until that endpoint lands,
-	// installs only flip locally on the marketplace round-trip — refresh
-	// resets the chip back to "Get" until the user reinstalls.
 
 	return (
 		<div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-6">

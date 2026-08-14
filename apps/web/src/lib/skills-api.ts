@@ -1,4 +1,4 @@
-import type { ListSkillsResponse, SkillDetailResponse } from "@omp-deck/protocol";
+import type { ListSkillsResponse, SkillDetailResponse, SkillSummary } from "@omp-deck/protocol";
 
 const BASE = "/api";
 
@@ -29,5 +29,20 @@ export const skillsApi = {
 		// pass it back opaquely; the server validates that the decoded path
 		// was actually returned by loadCapability before reading.
 		return req<SkillDetailResponse>(withCwd(`/skills/${encodeURIComponent(id)}`, cwd));
+	},
+	enable(id: string, cwd?: string): Promise<{ ok: true; skill: SkillSummary }> {
+		return req<{ ok: true; skill: SkillSummary }>(withCwd(`/skills/${encodeURIComponent(id)}/enable`, cwd), { method: "POST" });
+	},
+	disable(id: string, cwd?: string): Promise<{ ok: true; skill: SkillSummary }> {
+		return req<{ ok: true; skill: SkillSummary }>(withCwd(`/skills/${encodeURIComponent(id)}/disable`, cwd), { method: "POST" });
+	},
+	remove(id: string, cwd?: string): Promise<{ ok: true; name: string; path: string }> {
+		return req<{ ok: true; name: string; path: string }>(withCwd(`/skills/${encodeURIComponent(id)}`, cwd), { method: "DELETE" });
+	},
+	update(id: string, source: string, cwd?: string): Promise<{ ok: true; path: string }> {
+		return req<{ ok: true; path: string }>(withCwd(`/skills/${encodeURIComponent(id)}/update`, cwd), {
+			method: "POST",
+			body: JSON.stringify({ source }),
+		});
 	},
 };

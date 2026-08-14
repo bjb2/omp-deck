@@ -7,6 +7,8 @@ import type {
 } from "@omp-deck/protocol";
 
 import { Layout } from "@/components/Layout";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { Markdown } from "@/lib/markdown";
 import { skillsApi } from "@/lib/skills-api";
 import { useStore } from "@/lib/store";
@@ -58,6 +60,9 @@ export function SkillsView() {
 		void refresh();
 	}, [skillsChangeCounter, refresh]);
 
+	const [busy, setBusy] = useState(false);
+	const [actionError, setActionError] = useState<string | undefined>();
+
 	const filtered = useMemo(() => {
 		const skills = data?.skills ?? [];
 		const q = search.trim().toLowerCase();
@@ -81,6 +86,52 @@ export function SkillsView() {
 	}, [data, search, providerFilter, levelFilter]);
 
 	const selected = filtered.find((s) => s.id === selectedId) ?? filtered[0];
+
+	const [confirmRemove, setConfirmRemove] = useState(false);
+
+	const handleEnable = useCallback(async (): Promise<void> => {
+		if (!selected || busy) return;
+		setBusy(true);
+		setActionError(undefined);
+		try {
+			await skillsApi.enable(selected.id);
+			await refresh();
+		} catch (e) {
+			setActionError(String((e as Error).message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	}, [selected, busy, refresh]);
+
+	const handleDisable = useCallback(async (): Promise<void> => {
+		if (!selected || busy) return;
+		setBusy(true);
+		setActionError(undefined);
+		try {
+			await skillsApi.disable(selected.id);
+			await refresh();
+		} catch (e) {
+			setActionError(String((e as Error).message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	}, [selected, busy, refresh]);
+
+	const handleRemove = useCallback(async (): Promise<void> => {
+		if (!selected || busy) return;
+		setBusy(true);
+		setActionError(undefined);
+		try {
+			await skillsApi.remove(selected.id);
+			setConfirmRemove(false);
+			await refresh();
+			setSelectedId(undefined);
+		} catch (e) {
+			setActionError(String((e as Error).message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	}, [selected, busy, refresh]);
 
 	useEffect(() => {
 		if (!selected) {
@@ -111,6 +162,7 @@ export function SkillsView() {
 	}, [selected?.id, skillsChangeCounter]);
 
 	return (
+		<>
 		<Layout
 			sidebar={
 				<SkillsSidebar
@@ -185,6 +237,10 @@ export function SkillsView() {
 									detail={detail}
 									loading={detailLoading}
 									error={detailError}
+						busy={busy}
+						onEnable={handleEnable}
+						onDisable={handleDisable}
+						onRemove={() => setConfirmRemove(true)}
 									onBack={() => setMobileDetailOpen(false)}
 								/>
 							)}
@@ -193,6 +249,27 @@ export function SkillsView() {
 				</div>
 			}
 		/>
+		<Modal
+			open={confirmRemove}
+			onClose={() => (busy ? undefined : setConfirmRemove(false))}
+		>
+			<div className="flex flex-col gap-4 p-2">
+				<h2 className="text-base font-medium text-ink">Remove skill?</h2>
+				<p className="text-sm text-ink-2">
+					This deletes <span className="font-mono">{selected?.name}</span> and its directory. The change is
+					not reversible — re-installing will pull a fresh copy from the original source.
+				</p>
+				<div className="flex justify-end gap-2">
+					<Button variant="ghost" onClick={() => setConfirmRemove(false)} disabled={busy}>
+						Cancel
+					</Button>
+					<Button variant="danger" onClick={() => void handleRemove()} disabled={busy}>
+						{busy ? "Removing…" : "Remove"}
+					</Button>
+				</div>
+			</div>
+		</Modal>
+		</>
 	);
 }
 
@@ -249,12 +326,20 @@ function SkillDetailPane({
 	loading,
 	error,
 	onBack,
+	busy,
+	onEnable,
+	onDisable,
+	onRemove,
 }: {
 	skill: SkillSummary;
 	detail: SkillDetailResponse | null;
 	loading: boolean;
 	error: string | undefined;
 	onBack?: () => void;
+	busy: boolean;
+	onEnable: () => void;
+	onDisable: () => void;
+	onRemove: () => void;
 }) {
 	return (
 		<div className="flex h-full flex-col">
@@ -273,6 +358,37 @@ function SkillDetailPane({
 					<Sparkles className="h-4 w-4 text-accent" />
 					<h1 className="text-base font-medium text-ink">{skill.name}</h1>
 					<div className="ml-auto flex items-center gap-2">
+						{skill.provider !== "claude-plugins" ? (
+							skill.enabled ? (
+								<button
+									type="button"
+									onClick={onDisable}
+									disabled={busy}
+									className="rounded-md border border-line bg-paper-2 px-2 py-1 text-2xs text-ink-2 transition-colors hover:border-ink/30 hover:text-ink disabled:opacity-50"
+								>
+									Disable
+								</button>
+							) : (
+								<button
+									type="button"
+									onClick={onEnable}
+									disabled={busy}
+									className="rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-2xs text-accent transition-colors hover:bg-accent/15 disabled:opacity-50"
+								>
+									Enable
+								</button>
+							)
+						) : null}
+						{skill.provider !== "claude-plugins" ? (
+							<button
+								type="button"
+								onClick={onRemove}
+								disabled={busy}
+								className="rounded-md border border-danger/30 bg-danger/10 px-2 py-1 text-2xs text-danger transition-colors hover:bg-danger/15 disabled:opacity-50"
+							>
+								Remove
+							</button>
+						) : null}
 						<ProviderBadge provider={skill.provider} label={skill.providerLabel} />
 						<span className="font-mono text-2xs uppercase tracking-meta text-ink-3">
 							{skill.level}

@@ -11,6 +11,11 @@ import type {
 	UninstallPluginRequest,
 } from "@omp-deck/protocol";
 
+interface SetPluginEnabledBody {
+	enabled: boolean;
+	scope?: "user" | "project";
+}
+
 import { logger } from "./log.ts";
 import type { MarketplaceService } from "./marketplace-service.ts";
 
@@ -238,6 +243,27 @@ export function buildMarketplaceRouter(service: MarketplaceService): Hono {
 			return c.json({ ok: true });
 		} catch (err) {
 			log.error(`removeMarketplace failed`, err);
+			return c.json({ error: String((err as Error).message ?? err) }, 500);
+		}
+	});
+
+	app.post("/marketplace/plugins/:id/enabled", async (c) => {
+		const id = c.req.param("id");
+		if (!id) return c.json({ error: "id is required" }, 400);
+		let body: SetPluginEnabledBody;
+		try {
+			body = (await c.req.json()) as SetPluginEnabledBody;
+		} catch {
+			return c.json({ error: "invalid json" }, 400);
+		}
+		if (typeof body?.enabled !== "boolean") {
+			return c.json({ error: "enabled must be a boolean" }, 400);
+		}
+		try {
+			await service.setEnabled(id, body.enabled, body.scope);
+			return c.json({ ok: true, id, enabled: body.enabled });
+		} catch (err) {
+			log.error(`setEnabled failed`, err);
 			return c.json({ error: String((err as Error).message ?? err) }, 500);
 		}
 	});

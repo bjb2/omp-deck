@@ -15,6 +15,7 @@
 import { useEffect, useState } from "react";
 
 import { useStore } from "../lib/store";
+import { size as idbQueueSize } from "../lib/idb-queue";
 
 const HEALTHY_MS = 10_000;
 const WARN_MS = 20_000;
@@ -50,10 +51,31 @@ export function ConnectionIndicator(): JSX.Element {
 	const heartbeat = useStore((s) => s.heartbeat);
 	const wsStatus = useStore((s) => s.wsStatus);
 	const [now, setNow] = useState(Date.now());
+	const [queued, setQueued] = useState(0);
 
 	useEffect(() => {
 		const t = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(t);
+	}, []);
+
+	// Poll the IDB queue depth every 2s so the "N queued" pill reflects
+	// surviving offline frames without bespoke hooks. The cost is one
+	// `count()` over a tiny object store per tick — negligible.
+	useEffect(() => {
+		let cancelled = false;
+		const tick = (): void => {
+			idbQueueSize()
+				.then((n) => {
+					if (!cancelled) setQueued(n);
+				})
+				.catch(() => {});
+		};
+		tick();
+		const t = setInterval(tick, 2000);
+		return () => {
+			cancelled = true;
+			clearInterval(t);
+		};
 	}, []);
 
 	const gap = heartbeat ? now - heartbeat.lastReceivedAtMs : Infinity;
@@ -87,6 +109,14 @@ export function ConnectionIndicator(): JSX.Element {
 			aria-label={`server ${label}`}
 			className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800/60"
 		>
+			{queued > 0 ? (
+				<span
+					className="inline-flex items-center rounded-full bg-amber-500/20 px-1.5 py-0.5 font-mono text-2xs text-amber-300"
+					title={`${queued} frame${queued === 1 ? "" : "s"} queued in IDB, will replay on reconnect`}
+				>
+					{queued} queued
+				</span>
+			) : null}
 			<span
 				className={`inline-block h-2 w-2 rounded-full ${colorClass(color)} ${
 					color === "yellow" ? "animate-pulse" : ""

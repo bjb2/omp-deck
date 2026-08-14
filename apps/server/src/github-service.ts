@@ -1,15 +1,14 @@
 /**
  * GitHub-native backend: list the signed-in user's repos, clone one into a
- * workspace root, and keep a clone in sync — so "work on my GitHub repos" is
- * pick-from-a-list rather than copy-paste a clone URL into a terminal.
+ * workspace, and derive temporary auth URLs for push/pull without storing
+ * the token in `.git/config`.
  *
- * Auth is a personal access token, read from `GITHUB_TOKEN` or
- * `GITHUB_PERSONAL_ACCESS_TOKEN` (the deck's env editor already manages both;
- * the latter is what `agent-defaults/mcp.json.tmpl`'s github MCP server
- * expects, so one token configured there lights up both surfaces). No OAuth
- * app, no callback route — a token the user already has to create anyway for
- * git push authentication is also enough to drive this API.
+ * Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN in the environment.
+ * Tokens are never persisted or logged; always redacted before output.
  */
+import { $ } from "bun";
+
+import type { GitHubBranch, GitHubCommit, GitHubPullRequest, GitHubRepoSummary, GitHubViewer } from "@omp-deck/protocol";
 import { guardWorkspacePath, workspaceRoots } from "./path-guard.ts";
 import { logger } from "./log.ts";
 
@@ -61,34 +60,9 @@ async function api<T>(path: string, opts: { method?: string; body?: unknown } = 
 	return (await res.json()) as T;
 }
 
-export interface GitHubUser {
-	login: string;
-	name: string | null;
-	avatarUrl: string;
-}
-
-export async function getViewer(): Promise<GitHubUser> {
-	const data = await api<{ login: string; name: string | null; avatar_url: string }>("/user");
-	return { login: data.login, name: data.name, avatarUrl: data.avatar_url };
-}
-
-export interface GitHubRepo {
-	id: number;
-	fullName: string;
-	name: string;
-	owner: string;
-	private: boolean;
-	description: string | null;
-	defaultBranch: string;
-	pushedAt: string;
-	updatedAt: string;
-	stargazersCount: number;
-	cloneUrl: string;
-	sshUrl: string;
-	fork: boolean;
-	archived: boolean;
-	/** Set when a matching workspace clone was found. */
-	localPath?: string;
+export async function getViewer(): Promise<GitHubViewer> {
+	const user = await api<{ login: string; name: string | null; avatar_url: string }>("/user");
+	return { login: user.login, name: user.name, avatarUrl: user.avatar_url };
 }
 
 /**
@@ -96,7 +70,7 @@ export interface GitHubRepo {
  * "your repos" as understood by the person driving the deck, not every repo
  * they merely have read access to.
  */
-export async function listRepos(opts: { perPage?: number; page?: number } = {}): Promise<GitHubRepo[]> {
+export async function listRepos(opts: { perPage?: number; page?: number } = {}): Promise<GitHubRepoSummary[]> {
 	const perPage = Math.min(opts.perPage ?? 50, 100);
 	const page = opts.page ?? 1;
 	const data = await api<
@@ -160,6 +134,68 @@ export interface CloneResult {
 	alreadyExisted: boolean;
 }
 
+/** List branches for a repository. */
+export async function listBranches(owner: string, repo: string): Promise<GitHubBranch[]> {
+	if (!owner || !repo) throw new Error("owner and repo are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`);
+}
+
+/** List commits for a repository on a given ref. */
+export async function listCommits(owner: string, repo: string, ref: string): Promise<GitHubCommit[]> {
+	if (!owner || !repo || !ref) throw new Error("owner, repo, and ref are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(ref)}`);
+}
+
+/** Create a new repository. */
+export async function createRepo(name: string, isPrivate: boolean): Promise<GitHubRepoSummary> {
+	if (!name) throw new Error("name is required");
+	const user = await getViewer();
+	return api(`/user/repos`, {
+		method: "POST",
+		body: { name, private: isPrivate },
+	});
+}
+
+/** List pull requests for a repository. */
+export async function listPullRequests(owner: string, repo: string, state: "open" | "closed" | "all" = "open"): Promise<GitHubPullRequest[]> {
+	if (!owner || !repo) throw new Error("owner and repo are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=${encodeURIComponent(state)}`);
+}
+
+/** Get a single pull request. */
+export async function getPullRequest(owner: string, repo: string, number: number): Promise<GitHubPullRequest> {
+	if (!owner || !repo || !Number.isFinite(number)) throw new Error("owner, repo, and number are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`);
+}
+
+/** Create a pull request. */
+export async function createPullRequest(
+	owner: string,
+	repo: string,
+	body: { title: string; head: string; base: string; body?: string },
+): Promise<GitHubPullRequest> {
+	if (!owner || !repo) throw new Error("owner and repo are required");
+	if (!body.title || !body.head || !body.base) throw new Error("title, head, and base are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, {
+		method: "POST",
+		body: {
+			title: body.title,
+			head: body.head,
+			base: body.base,
+			body: body.body ?? null,
+		},
+	});
+}
+
+/** Merge a pull request. */
+export async function mergePullRequest(owner: string, repo: string, number: number, method: "merge" | "squash" | "rebase" = "merge"): Promise<{ message: string }> {
+	if (!owner || !repo || !Number.isFinite(number)) throw new Error("owner, repo, and number are required");
+	return api(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/merge`, {
+		method: "PUT",
+		body: { merge_method: method },
+	});
+}
+
 /**
  * Clone `fullName` (`owner/repo`) into the first available workspace root,
  * or update it in place if already cloned there under the same name.
@@ -203,6 +239,7 @@ export async function cloneRepo(fullName: string, opts: { intoRoot?: string } = 
 	log.info(`cloned ${fullName} -> ${guard.resolved}`);
 	return { path: guard.resolved, alreadyExisted: false };
 }
+
 
 function redactToken(text: string, token: string): string {
 	return token ? text.split(token).join("***") : text;

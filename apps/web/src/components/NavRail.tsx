@@ -4,6 +4,7 @@ import {
 	Clock,
 	GitMerge,
 	FolderGit2,
+	LayoutDashboard,
 	KanbanSquare,
 	MessagesSquare,
 	Terminal,
@@ -25,7 +26,8 @@ const ITEMS: ReadonlyArray<{
 	label: string;
 	icon: typeof MessagesSquare;
 }> = [
-	{ to: "/", label: "Chat", icon: MessagesSquare },
+	{ to: "/", label: "Overview", icon: LayoutDashboard },
+	{ to: "/chat", label: "Chat", icon: MessagesSquare },
 	{ to: "/shell", label: "Shell", icon: Terminal },
 	{ to: "/explorer", label: "Explorer", icon: FolderGit2 },
 	{ to: "/tasks", label: "Tasks", icon: KanbanSquare },

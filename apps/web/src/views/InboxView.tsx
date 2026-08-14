@@ -161,7 +161,7 @@ export function InboxView() {
 			`task, POST /api/tasks and report the new task id.`,
 		].join("\n");
 		setPendingDraft({ text: draft });
-		navigate("/");
+		navigate("/chat");
 	}
 
 	async function promoteToTask(it: InboxItem): Promise<void> {

@@ -2119,6 +2119,35 @@ export interface ListGitHubReposResponse {
 	repos: GitHubRepoSummary[];
 }
 
+export interface GitHubBranch {
+	name: string;
+	commit: { sha: string; url: string };
+	protected: boolean;
+}
+
+export interface GitHubCommit {
+	sha: string;
+	message: string;
+	author: { name: string; email: string; date: string };
+	url: string;
+}
+
+// GitHub's PR payload is passed through unmodified (no server-side
+// snake_case→camelCase mapping), so this mirrors the raw API shape —
+// matching `apps/server/src/github-service.ts`'s `GitHubPullRequest`.
+export interface GitHubPullRequest {
+	id: number;
+	number: number;
+	title: string;
+	body: string | null;
+	state: "open" | "closed";
+	head: { ref: string; sha: string };
+	base: { ref: string; sha: string };
+	user: { login: string; avatar_url: string };
+	created_at: string;
+	updated_at: string;
+	html_url: string;
+}
 export interface CloneRepoRequest {
 	fullName: string;
 	intoRoot?: string;

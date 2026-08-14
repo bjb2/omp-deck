@@ -1,29 +1,42 @@
 import { useMemo } from "react";
-import { CheckCircle2, Download, Loader2, Plug } from "lucide-react";
+import { CheckCircle2, Download, Loader2, Plug, Power, Trash2 } from "lucide-react";
 import type { StoreItem, StoreSection } from "@omp-deck/protocol";
 import { marketplaceApi } from "@/lib/marketplace-api";
 import { useStorefrontStore } from "@/lib/storefront-store";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-/** Shape we expect on `installAction.payload` for kind=marketplace. Opaque
- *  in the protocol, but only the marketplace kind flows through `install()`
- *  here. mcp / skill / prompt have their own server endpoints out of scope. */
+/**
+ * Shape we expect on `installAction.payload` for kind=marketplace. Opaque
+ * in the protocol, but only the marketplace kind flows through `install()`
+ * here — MCP and skill are handled by their own server endpoints out of
+ * the storefront button (the storefront MCP entries are *already-installed*
+ * records read straight from mcp.json, and there is no skill listing path
+ * in the catalog today).
+ */
 function readMarketplacePayload(payload: unknown): string | null {
 	if (payload && typeof payload === "object" && "marketplace" in payload) {
-		const m = payload.marketplace;
-		if (typeof m === "string" && m.length > 0) return m;
+		const m = (payload as Record<string, unknown>).marketplace;
+		if (typeof m === "string" && m.trim()) return m;
+	}
+	return null;
+}
+
+function readName(payload: unknown): string | null {
+	if (payload && typeof payload === "object" && "name" in payload) {
+		const n = (payload as Record<string, unknown>).name;
+		if (typeof n === "string" && n.trim()) return n;
 	}
 	return null;
 }
 
 /**
- * Animated "Get / Open" button. Pulses on hover (Apple-Store affordance);
- * `compact` shrinks the chip for use in cards. Click dispatches a real
- * `marketplaceApi.install()` round-trip for items with `installAction.kind`
- * === "marketplace". Confirmed installs flip to "Open" via the
- * `useStorefrontStore.installedAt` map; failures revert the chip and surface
- * the server message through an in-app toast.
+ * Animated install/manage button. Behavior by `kind`:
+ *   - `marketplace` → POST /api/marketplace/install
+ *   - `mcp`         → already-installed record. Reads enabled state from
+ *                     the global mcp-health slice and offers
+ *                     Enable / Disable / Remove against the new CRUD routes.
+ *   - `skill`, `prompt` → unreachable (the catalog emits no such items).
  */
 export function InstallButton({
 	item,
@@ -41,29 +54,33 @@ export function InstallButton({
 	const beginInstall = useStorefrontStore((s) => s.beginInstall);
 	const confirmInstall = useStorefrontStore((s) => s.confirmInstall);
 	const revertInstall = useStorefrontStore((s) => s.revertInstall);
+	const clearInstall = useStorefrontStore((s) => s.clearInstall);
 
-	const verb = installActionVerb(item.installAction.kind);
+	const mcpStatus = useStore((s) => s.mcpHealth.response?.status ?? []);
+	const kind = item.installAction.kind;
 
-	// Install endpoint wiring by kind. Only `marketplace` has a server
-	// round-trip today (`POST /api/marketplace/install` via `marketplaceApi`).
-	// `mcp` and `skill` would hit `/api/mcp/install` / `/api/skills/install`
-	// — neither route is registered in `apps/server/src/routes.ts` yet, so
-	// we render them as disabled "Install" placeholders. `prompt` doesn't
-	// install at all (clones into the library instead).
-	const endpointReady = isEndpointReady(item.installAction.kind);
+	const verb = installActionVerb(kind);
+
 	const marketplaceName = useMemo(
 		() => marketplace ?? readMarketplacePayload(item.installAction.payload),
 		[marketplace, item.installAction.payload],
 	);
-	const isLiveInstall =
-		endpointReady && (item.installAction.kind === "marketplace" ? marketplaceName !== null : true);
+
+	// MCP items are always already-installed (they're sourced from mcp.json
+	// directly). Decide the chip from the live probe instead of a round-trip.
+	const mcpState = useMemo(() => {
+		if (kind !== "mcp") return null;
+		const name = readName(item.installAction.payload);
+		if (!name) return null;
+		const hit = mcpStatus.find((s) => s.name === name);
+		if (!hit) return { name, enabled: true };
+		return { name, enabled: hit.state !== "disabled" };
+	}, [kind, item.installAction.payload, mcpStatus]);
+
 	const isDone = installedAt !== undefined;
 	const isPending = phase === "pending";
 
 	function pushToast(level: "info" | "error", title: string, body: string): void {
-		// Append directly to the existing notification queue so the in-app
-		// toast renderer picks it up. Matches the shape produced by the WS
-		// `notification` frame handler in store.ts.
 		const id = `storefront-${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 		useStore.setState((s) => ({
 			notifications: [
@@ -82,12 +99,9 @@ export function InstallButton({
 		}));
 	}
 
-	async function onClick(e: React.MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
+	async function onInstall(): Promise<void> {
 		if (isPending || isDone) return;
-		if (!isLiveInstall || !marketplaceName) return;
-
+		if (kind !== "marketplace" || !marketplaceName) return;
 		beginInstall(item.id);
 		try {
 			await marketplaceApi.install({ name: item.name, marketplace: marketplaceName });
@@ -105,19 +119,106 @@ export function InstallButton({
 		}
 	}
 
-	const Icon =
-		isPending ? Loader2 : isDone ? CheckCircle2 : iconForKind(item.installAction.kind);
-	const label = isDone ? "Open" : isPending ? "Installing…" : verb;
+	async function onMcpToggle(): Promise<void> {
+		if (!mcpState || isPending) return;
+		beginInstall(item.id);
+		try {
+			const next = !mcpState.enabled;
+			const path = `/api/mcp/${encodeURIComponent(mcpState.name)}/${next ? "enable" : "disable"}`;
+			const res = await fetch(path, { method: "POST" });
+			if (!res.ok) {
+				const body = await res.text().catch(() => "");
+				throw new Error(`${res.status}: ${body}`);
+			}
+			confirmInstall(item.id);
+			pushToast("info", `${next ? "Enabled" : "Disabled"} ${mcpState.name}`, "");
+		} catch (err) {
+			revertInstall(item.id);
+			pushToast("error", `Failed: ${item.name}`, (err as Error).message);
+		}
+	}
+
+	async function onMcpRemove(): Promise<void> {
+		if (!mcpState || isPending) return;
+		beginInstall(item.id);
+		try {
+			const res = await fetch(`/api/mcp/${encodeURIComponent(mcpState.name)}`, { method: "DELETE" });
+			if (!res.ok) {
+				const body = await res.text().catch(() => "");
+				throw new Error(`${res.status}: ${body}`);
+			}
+			clearInstall(item.id);
+			pushToast("info", `Removed ${mcpState.name}`, "");
+		} catch (err) {
+			revertInstall(item.id);
+			pushToast("error", `Failed: ${item.name}`, (err as Error).message);
+		}
+	}
+
+	if (kind === "mcp" && mcpState) {
+		const Icon = isPending ? Loader2 : mcpState.enabled ? CheckCircle2 : Power;
+		const label = isPending
+			? "Working…"
+			: mcpState.enabled
+				? "Installed"
+				: "Enable";
+		return (
+			<div className={cn("flex items-center gap-1.5", compact && "text-2xs")}>
+				<button
+					type="button"
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						void onMcpToggle();
+					}}
+					disabled={isPending}
+					title={mcpState.enabled ? "Disable MCP server" : "Enable MCP server"}
+					className={cn(
+						"group/btn relative inline-flex items-center gap-1.5 rounded-full font-medium text-ink transition-colors",
+						"border border-line bg-paper hover:border-accent hover:bg-accent/10",
+						compact ? "px-3 py-1 text-2xs" : "px-4 py-1.5 text-xs",
+						mcpState.enabled && "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15",
+					)}
+				>
+					<span className="absolute inset-0 -z-10 rounded-full opacity-0 transition-opacity group-hover/btn:opacity-100 group-hover/btn:ring-2 group-hover/btn:ring-accent/40" />
+					<Icon className={cn("h-3 w-3", isPending && "animate-spin")} />
+					{label}
+				</button>
+				<button
+					type="button"
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						void onMcpRemove();
+					}}
+					disabled={isPending}
+					title="Remove MCP server from mcp.json"
+					className={cn(
+						"inline-flex items-center justify-center rounded-full border border-line bg-paper text-ink-3 transition-colors hover:border-danger hover:text-danger",
+						compact ? "h-6 w-6" : "h-7 w-7",
+						isPending && "opacity-50",
+					)}
+				>
+					<Trash2 className="h-3 w-3" />
+				</button>
+			</div>
+		);
+	}
+
+	const isLiveInstall = kind === "marketplace" && marketplaceName !== null;
 	const disabled = !isLiveInstall && !isDone;
+	const Icon = isPending ? Loader2 : isDone ? CheckCircle2 : iconForKind(kind);
+	const label = isDone ? "Open" : isPending ? "Installing…" : verb;
 
 	return (
 		<button
 			type="button"
-			onClick={onClick}
+			onClick={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				void onInstall();
+			}}
 			disabled={disabled}
-			title={
-				disabled ? disabledTitleForKind(item.installAction.kind) : undefined
-			}
 			className={cn(
 				"group/btn relative inline-flex items-center gap-1.5 rounded-full font-medium text-ink transition-colors",
 				"border border-line bg-paper hover:border-accent hover:bg-accent/10",
@@ -133,9 +234,6 @@ export function InstallButton({
 	);
 }
 
-// `section` is unused here but accepted implicitly through `item.section`.
-// Re-exported via the signature for any future caller that wants to pin the
-// section independently (handy for tests).
 export type { StoreSection };
 
 function iconForKind(kind: StoreItem["installAction"]["kind"]) {
@@ -146,20 +244,4 @@ function iconForKind(kind: StoreItem["installAction"]["kind"]) {
 function installActionVerb(kind: StoreItem["installAction"]["kind"]): string {
 	if (kind === "marketplace") return "Get";
 	return "Install";
-}
-
-/** Which install kinds have a wired server endpoint today.
- *  `mcp` / `skill` would need `/api/mcp/install` and `/api/skills/install`
- *  (currently absent from `apps/server/src/routes.ts`); `prompt` is not an
- *  install flow at all — prompts clone into the library. Keep these in sync
- *  when the corresponding routes land. */
-function isEndpointReady(kind: StoreItem["installAction"]["kind"]): boolean {
-	return kind === "marketplace";
-}
-
-function disabledTitleForKind(kind: StoreItem["installAction"]["kind"]): string {
-	if (kind === "prompt") return "Prompts clone into your library — open the item to use it.";
-	if (kind === "mcp") return "Coming soon — MCP install endpoint not wired yet.";
-	if (kind === "skill") return "Coming soon — skills install endpoint not wired yet.";
-	return "Install endpoint not wired for this item yet";
 }

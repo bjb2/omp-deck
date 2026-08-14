@@ -7,6 +7,12 @@ import type {
 	UpdatePromptRequest,
 } from "@omp-deck/protocol";
 
+import {
+	enqueueHttpOp,
+	drainHttpOps,
+	type HttpOp,
+} from "./idb-queue";
+
 const BASE = "/api";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -21,6 +27,53 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 	return (await res.json()) as T;
 }
 
+/**
+ * Run a mutating HTTP op with offline durability. If the network call
+ * fails (offline OR 5xx), the op is persisted in IDB and replayed on the
+ * next online `replayQueuedOps()` call. The local draft is kept until the
+ * server actually accepts the op (the promptsApi wrapper calling this
+ * is responsible for clearing its own draft state on success).
+ */
+async function runMutating<T>(
+	op: Omit<HttpOp, "id">,
+): Promise<T> {
+	try {
+		return await req<T>(op.path, { method: op.method, body: JSON.stringify(op.body) });
+	} catch (err) {
+		// Network failure / server error → persist for later replay.
+		// Distinct id per attempt so a future update with the same prompt
+		// id replaces the queued op (we tombstone the old one with delete).
+		const id = `http-${op.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		await enqueueHttpOp({ ...op, id });
+		throw err;
+	}
+}
+
+/**
+ * Replay every queued HTTP op against the server. Called from the WS
+ * `open` listener so the same offline work drains regardless of which
+ * transport (WS or HTTP) carried it. Each op is removed on a 2xx reply;
+ * failures preserve the op for next time (FIFO preserved).
+ *
+ * Returns when the queue is empty or the loop hits a failure (preserves
+ * order — we don't skip over a broken op to try the next one).
+ */
+export async function replayQueuedOps(): Promise<void> {
+	let stop = false;
+	await drainHttpOps(async (op) => {
+		if (stop) return false;
+		try {
+			await req(op.path, { method: op.method, body: JSON.stringify(op.body) });
+			return true;
+		} catch (err) {
+			console.warn(`replayQueuedOps: ${op.kind} ${op.path} failed`, err);
+			stop = true;
+			return false;
+		}
+	});
+}
+
+
 export const promptsApi = {
 	list(): Promise<ListPromptsResponse> {
 		return req<ListPromptsResponse>("/prompts/library");
@@ -29,12 +82,19 @@ export const promptsApi = {
 		return req<Prompt>(`/prompts/library/${encodeURIComponent(id)}`);
 	},
 	create(body: CreatePromptRequest): Promise<Prompt> {
-		return req<Prompt>("/prompts/library", { method: "POST", body: JSON.stringify(body) });
+		return runMutating<Prompt>({
+			kind: "create",
+			method: "POST",
+			path: "/prompts/library",
+			body,
+		});
 	},
 	update(id: string, patch: UpdatePromptRequest): Promise<Prompt> {
-		return req<Prompt>(`/prompts/library/${encodeURIComponent(id)}`, {
+		return runMutating<Prompt>({
+			kind: "update",
 			method: "PUT",
-			body: JSON.stringify(patch),
+			path: `/prompts/library/${encodeURIComponent(id)}`,
+			body: patch,
 		});
 	},
 	remove(id: string): Promise<{ ok: true }> {
@@ -44,9 +104,11 @@ export const promptsApi = {
 		return req<Prompt>(`/prompts/library/${encodeURIComponent(id)}/export`);
 	},
 	importPrompt(body: ImportPromptRequest): Promise<{ id: string; prompt: Prompt }> {
-		return req<{ id: string; prompt: Prompt }>("/prompts/library/import", {
+		return runMutating<{ id: string; prompt: Prompt }>({
+			kind: "import",
 			method: "POST",
-			body: JSON.stringify(body),
+			path: "/prompts/library/import",
+			body,
 		});
 	},
 	getBySlug(slug: string): Promise<Prompt> {
