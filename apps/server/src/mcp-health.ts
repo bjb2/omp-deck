@@ -19,6 +19,7 @@ import type { McpHealthStatus } from "@omp-deck/protocol";
 
 import { loadConfig } from "./config.ts";
 import { logger } from "./log.ts";
+import { broadcastBus } from "./broadcast-bus.ts";
 
 const log = logger("mcp-health");
 
@@ -291,11 +292,24 @@ export class McpHealthProbe {
 			}),
 		);
 		this.schedulePersist();
+	// Single broadcast per probe cycle (not one per server). WsHub.broadcast
+	// throttles `mcp_health` at 30s anyway, and per-server frames under a
+	// multi-server config would be dropped silently after the first; emitting
+	// the full snapshot here keeps the chrome badge + studio row coherent.
+	broadcastBus.broadcast({
+		type: "mcp_health",
+		status: this.snapshot(),
+	});
 	}
 
 	private resolveConfigPath(): string | undefined {
-		const agentDir = loadConfig().agentDir;
-		if (!agentDir) return undefined;
+		// Fall back to the standard install location so the probe reads the
+		// user's actual mcp.json on a fresh cold-boot. The same fallback is
+		// used by routes-mcp-install / skills / storefront-installed /
+		// onboarding-state / session-lifecycle / skillsmp / custom-providers,
+		// so probe state stays consistent with everything else that touches
+		// the user's MCP config. Overridable via OMP_AGENT_DIR.
+		const agentDir = loadConfig().agentDir ?? path.join(os.homedir(), ".omp", "agent");
 		const candidate = path.join(agentDir, "mcp.json");
 		return existsSync(candidate) ? candidate : undefined;
 	}

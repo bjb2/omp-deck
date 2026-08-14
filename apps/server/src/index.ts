@@ -36,6 +36,7 @@ import { KbService, resolveKbRoot } from "./kb-service.ts";
 import { startKbWatcher } from "./kb-watcher.ts";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import { KbProtocolHandler } from "./kb-protocol.ts";
+import { getMcpHealthProbe } from "./mcp-health.ts";
 import { installStarterSkills } from "./starter-skills.ts";
 import { installStarterExtensions } from "./starter-extensions.ts";
 import { buildDefaultBridgeSupervisor } from "./bridge-supervisor.ts";
@@ -162,6 +163,10 @@ async function main(): Promise<void> {
 
 	const routinesRunner = new RoutinesRunner();
 	routinesRunner.start();
+	// Boot the MCP health probe so the WS broadcast loop is alive before
+	// the first user request hits /api/mcp/health. Without this the badge
+	// in the chrome StatusBar stays empty until a manual probe request.
+	getMcpHealthProbe().start();
 	let server: Server<ConnectionData>;
 	const supervisor = buildDefaultBridgeSupervisor();
 	const marketplaceService = new MarketplaceService();
