@@ -29,7 +29,11 @@ const LS_PREFIX = "omp-deck:draft:";
  * quota, works for Blobs); localStorage is best-effort JSON-only backup,
  * consulted on hydration only when IDB has nothing newer.
  */
-function mirrorToLocalStorage(key: string, value: unknown): void {
+/**
+ * Public seam for tests + advanced callers that need the same
+ * durable sync-mirror contract the hook relies on.
+ */
+export function mirrorToLocalStorage(key: string, value: unknown): void {
 	if (typeof localStorage === "undefined") return;
 	if (!isJsonSerializable(value)) return;
 	try {
@@ -41,7 +45,8 @@ function mirrorToLocalStorage(key: string, value: unknown): void {
 	}
 }
 
-function readLocalStorageMirror<T>(key: string): { value: T; savedAt: number } | null {
+/** Public seam (see above). Strictly-newer-wins is enforced by loadDraft. */
+export function readLocalStorageMirror<T>(key: string): { value: T; savedAt: number } | null {
 	if (typeof localStorage === "undefined") return null;
 	try {
 		const raw = localStorage.getItem(LS_PREFIX + key);
@@ -51,7 +56,8 @@ function readLocalStorageMirror<T>(key: string): { value: T; savedAt: number } |
 	}
 }
 
-function clearLocalStorageMirror(key: string): void {
+/** Public seam (see above). */
+export function clearLocalStorageMirror(key: string): void {
 	if (typeof localStorage === "undefined") return;
 	try {
 		localStorage.removeItem(LS_PREFIX + key);
