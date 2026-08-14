@@ -69,6 +69,11 @@ const EMPTY_FILE: CustomProvidersFile = { version: 1, providers: [] };
 export class CustomProvidersRegistry {
 	private filePath: string | undefined;
 	private fileMtime = 0;
+	// Whether `fileMtime` reflects a completed load. Tracked separately from
+	// `providers.size` because a perfectly valid load can legitimately yield
+	// zero providers — gating the mtime cache on a non-empty result made
+	// every poll re-read and re-log for any file that produces none.
+	private hasLoadedMtime = false;
 	private providers: Map<string, CustomProvider> = new Map();
 	private fileWatcher: ReturnType<typeof setInterval> | undefined;
 	private refreshInFlight: Promise<void> | undefined;
@@ -87,6 +92,14 @@ export class CustomProvidersRegistry {
 			const raw = await fs.readFile(fp, "utf-8");
 			const parsed = YAML.parse(raw) as CustomProvidersFile | null;
 			if (!parsed || typeof parsed !== "object") return EMPTY_FILE;
+			// `$OMP_AGENT_DIR/models.yml` is shared with the OMP agent itself,
+			// which uses a different shape (`providers` keyed by id, no
+			// `version`). That file is not ours to consume and not an error —
+			// it just means no deck-managed custom providers are configured.
+			if (parsed.version === undefined && !Array.isArray(parsed.providers)) {
+				log.debug("models.yml: agent-owned format; no deck-managed providers");
+				return EMPTY_FILE;
+			}
 			if (parsed.version !== 1) {
 				log.warn(`models.yml: unsupported version ${String(parsed.version)}`);
 				return EMPTY_FILE;
@@ -110,6 +123,7 @@ export class CustomProvidersRegistry {
 		await fs.writeFile(tmp, YAML.stringify(file), "utf-8");
 		await fs.rename(tmp, fp);
 		this.fileMtime = (await fs.stat(fp)).mtimeMs;
+		this.hasLoadedMtime = true;
 		this.providers.clear();
 		for (const p of file.providers) this.providers.set(p.id, p);
 	}
@@ -139,13 +153,15 @@ export class CustomProvidersRegistry {
 			mtime = (await fs.stat(fp)).mtimeMs;
 		} catch {
 			// File absent — treat as empty registry.
+			this.hasLoadedMtime = false;
 			if (this.providers.size === 0) return { changed: false };
 			await this.applyToRegistry([]);
 			this.providers.clear();
 			return { changed: true };
 		}
-		if (mtime === this.fileMtime && this.providers.size > 0) return { changed: false };
+		if (mtime === this.fileMtime && this.hasLoadedMtime) return { changed: false };
 		this.fileMtime = mtime;
+		this.hasLoadedMtime = true;
 		const file = await this.load();
 		await this.applyToRegistry(file.providers);
 		this.providers.clear();
