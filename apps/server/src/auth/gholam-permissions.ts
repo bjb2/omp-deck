@@ -32,15 +32,17 @@ interface GholamPermissionGrant {
 	updatedAt: string;
 }
 
-/** Default seed: all reads auto-granted. Writes default `false` until the
- *  user toggles them in Settings → Gholam. */
+/** Default seed per §5 of docs/STOREFRONT.md: auto-grants every entry with
+ *  level="read". Writes (library.prompts.write, kb.write, github.write,
+ *  openship.deploy) and execute-level entries (marketplace.install,
+ *  mcp.invoke) default to `false` until the user toggles them in
+ *  Settings → Gholam. */
 const DEFAULT_GRANT: GholamPermissionKey[] = [
 	"library.prompts.read",
 	"library.history.read",
 	"library.sessions.read",
 	"kb.read",
 	"marketplace.search",
-	"mcp.invoke",
 	"discovery.search",
 	"prompts.recommend",
 ];
