@@ -719,3 +719,17 @@
 	white-space: pre-wrap;
 	word-break: break-word;
 }
+
+/* ─── Shell terminal pane ──────────────────────────────────────────────────
+   The shell body is an ANSI-preserving pre. The deck already wires a
+   monospace font (`--font-mono`) per theme, so we just inherit it and
+   keep the wrapping behaviour consistent with the workflowz pre above. */
+.shell-body {
+	font-family: var(--font-mono, ui-monospace);
+	font-size: 0.72rem;
+	line-height: 1.5;
+	color: rgb(var(--ink));
+	white-space: pre-wrap;
+	word-break: break-word;
+	tab-size: 4;
+}

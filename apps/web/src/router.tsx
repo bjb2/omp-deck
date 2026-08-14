@@ -26,6 +26,7 @@ import { StorefrontSection } from "./views/storefront/StorefrontSection";
 import { StorefrontDetail } from "./views/storefront/StorefrontDetail";
 import { StorefrontSearch } from "./views/storefront/StorefrontSearch";
 import { onboardingApi } from "./lib/onboarding-api";
+import { ShellView } from "./views/ShellView";
 
 /**
  * Explorer and Agent Config pull in CodeMirror (~600KB minified) for the code
@@ -95,6 +96,7 @@ const router = createBrowserRouter([
 				),
 			},
 			{ path: "/tasks", element: <TasksView /> },
+			{ path: "/shell", element: <ShellView /> },
 			{ path: "/routines", element: <RoutinesView /> },
 			{ path: "/workflows", element: <WorkflowsView /> },
 			{ path: "/gholam", element: <GholamView /> },

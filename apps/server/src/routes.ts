@@ -36,6 +36,7 @@ import { buildAuthRouter } from "./routes-auth.ts";
 import { getAuthConfig } from "./auth/config.ts";
 import { buildOnboardingRouter } from "./routes-onboarding.ts";
 import { buildFilesRouter } from "./routes-files.ts";
+import { buildShellRouter } from "./routes-shell.ts";
 import { buildGitRouter } from "./routes-git.ts";
 import { buildGitHubRouter } from "./routes-github.ts";
 import { buildAgentConfigRouter } from "./routes-agent-config.ts";
@@ -270,6 +271,7 @@ export function buildRouter(
 	app.route("/", buildSkillsRouter(skills));
 	app.route("/", buildKbRouter(kb));
 	app.route("/", buildFilesRouter());
+	app.route("/", buildShellRouter());
 	app.route("/", buildGitRouter());
 	app.route("/", buildGitHubRouter());
 	app.route("/", buildAgentConfigRouter({ restartServer: opts.restartServer }));

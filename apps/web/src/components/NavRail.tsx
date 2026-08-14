@@ -1,38 +1,39 @@
 import {
 	BookOpen,
-	Bot,
 	Bot as GholamIcon,
 	Clock,
 	GitMerge,
 	FolderGit2,
-	Inbox,
 	KanbanSquare,
 	MessagesSquare,
-	Plug,
+	Terminal,
 	Settings,
 	Sparkles,
-	Store,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
+// Remote-workstation nav. Only the surfaces needed to drive an app build
+// remotely: chat (drive the agent), shell (run/test/git/cleanup), files
+// (browse/edit the workspace), tasks (work tracking), routines (scheduled
+// jobs), skills (reusable agent prompts), gholam (async twin), workflows
+// (parallel dispatch). KB / Prompts / Inbox / Integrations / Marketplace
+// / Agent Config remain reachable by URL — none of them are removed, just
+// out of the rail.
 const ITEMS: ReadonlyArray<{
 	to: string;
 	label: string;
 	icon: typeof MessagesSquare;
 }> = [
 	{ to: "/", label: "Chat", icon: MessagesSquare },
+	{ to: "/shell", label: "Shell", icon: Terminal },
 	{ to: "/explorer", label: "Explorer", icon: FolderGit2 },
 	{ to: "/tasks", label: "Tasks", icon: KanbanSquare },
 	{ to: "/routines", label: "Routines", icon: Clock },
 	{ to: "/workflows", label: "Workflows", icon: GitMerge },
-	{ to: "/inbox", label: "Inbox", icon: Inbox },
-	{ to: "/marketplace", label: "Marketplace", icon: Store },
 	{ to: "/skills", label: "Skills", icon: Sparkles },
 	{ to: "/gholam", label: "Gholam", icon: GholamIcon },
-	{ to: "/agent-config", label: "Agent Config", icon: Bot },
-	{ to: "/kb", label: "Knowledge", icon: BookOpen },
-	{ to: "/integrations", label: "Integrations", icon: Plug },
+	{ to: "/prompts/library", label: "Prompts", icon: BookOpen },
 ];
 
 /**
