@@ -263,6 +263,13 @@ export class MarketplaceService {
 	}
 
 	async addMarketplace(source: string): Promise<MarketplaceSource> {
+		// Mirror install()/dryRun(): per-call re-check the SSL CA bundle before
+		// any SDK git clone. The boot-time applySslFix() can drift if a child
+		// process clears GIT_SSL_CAINFO; without this re-check, POST
+		// /api/marketplaces was returning 500 with raw git stderr on fresh
+		// containers where the bundle path resolved but wasn't wired into the
+		// per-call spawn env yet.
+		marketplaceExtras.ensureSslFix();
 		const mgr = this.getManager();
 		const entry = await mgr.addMarketplace(source);
 		return {
@@ -276,6 +283,20 @@ export class MarketplaceService {
 	async removeMarketplace(name: string): Promise<void> {
 		const mgr = this.getManager();
 		await mgr.removeMarketplace(name);
+	}
+
+	/**
+	 * True iff the marketplace registry on disk has zero entries. Used by the
+	 * boot seed block in `index.ts` to decide whether the canonical
+	 * marketplace needs adding — idempotent across restarts and after the
+	 * user adds their own marketplaces. Reads the registry directly (same
+	 * shape `dryRun()` uses at line 198) rather than going through the lazy
+	 * `MarketplaceManager`, so the check costs nothing if the user already
+	 * populated the file.
+	 */
+	async isRegistryEmpty(): Promise<boolean> {
+		const reg = await readMarketplacesRegistry(getMarketplacesRegistryPath());
+		return reg.marketplaces.length === 0;
 	}
 
 	async refresh(): Promise<void> {

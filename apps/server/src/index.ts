@@ -177,6 +177,27 @@ async function main(): Promise<void> {
 		kbService,
 		{ restartServer: () => scheduleRestart(server) },
 	);
+
+	// Seed the canonical Anthropic marketplace on first boot. The deck ships
+	// no marketplace registry, so a fresh container boots with an empty
+	// catalog and the marketplace / storefront / prompts-discover /
+	// discovery-search surfaces all show empty. Idempotent: only runs when
+	// the registry has zero entries, so user-added marketplaces and later
+	// boots both no-op. Non-fatal: network/SSL failures are logged and
+	// swallowed so a broken seed never blocks the HTTP listener from
+	// coming up — the marketplace surface can recover later via POST
+	// /api/marketplaces (which now runs ensureSslFix itself).
+	try {
+		if (await marketplaceService.isRegistryEmpty()) {
+			await marketplaceService.addMarketplace(
+				"https://github.com/anthropics/claude-plugins-official.git",
+			);
+			log.info(`seeded canonical marketplace: anthropics/claude-plugins-official`);
+		}
+	} catch (err) {
+		log.warn(`marketplace seed skipped`, err);
+	}
+
 	const skillsWatcherDispose = startSkillsWatcher(config);
 	const kbWatcherDispose = startKbWatcher(kbService);
 	const ws = new WsHub(bridge);
