@@ -1,0 +1,23 @@
+{
+  "$schema": "deck-storefront-known-good-sources-v1",
+  "sources": {
+    "anthropics/claude-plugins-official": {
+      "verifiedAt": "2026-08-01",
+      "installable": [
+        "anthropic-claude-code",
+        "claude-sonnet-4",
+        "code-review",
+        "github",
+        "security-guidance"
+      ],
+      "knownFailures": [],
+      "notes": "Anthropic-managed marketplace. Self-named `claude-plugins-official` in marketplace.json. Install works after a marketplace refresh."
+    },
+    "anthropics/claude-plugins-community": {
+      "verifiedAt": "2026-08-01",
+      "installable": [],
+      "knownFailures": [],
+      "notes": "Community mirror; not first-party. Entries added on report."
+    }
+  }
+}

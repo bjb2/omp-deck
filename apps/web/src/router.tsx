@@ -13,6 +13,18 @@ import { IntegrationsView } from "./views/IntegrationsView";
 import { OnboardingView } from "./views/OnboardingView";
 import { WorkflowsView } from "./views/WorkflowsView";
 import { GholamView } from "./views/GholamView";
+import { GholamChats } from "./views/GholamChats";
+import { GholamChatView } from "./views/GholamChat";
+import { GholamChatNew } from "./views/GholamChatNew";
+import { PromptsLibrary } from "./views/PromptsLibrary";
+import { PromptsDiscover } from "./views/PromptsDiscover";
+import { PromptsShare } from "./views/PromptsShare";
+import { PreviewView } from "./views/PreviewView";
+import { StudioView } from "./views/StudioView";
+import { StorefrontHome } from "./views/storefront/StorefrontHome";
+import { StorefrontSection } from "./views/storefront/StorefrontSection";
+import { StorefrontDetail } from "./views/storefront/StorefrontDetail";
+import { StorefrontSearch } from "./views/storefront/StorefrontSearch";
 import { onboardingApi } from "./lib/onboarding-api";
 
 /**
@@ -86,14 +98,31 @@ const router = createBrowserRouter([
 			{ path: "/routines", element: <RoutinesView /> },
 			{ path: "/workflows", element: <WorkflowsView /> },
 			{ path: "/gholam", element: <GholamView /> },
+			{ path: "/gholam/chats", element: <GholamChats /> },
+			{ path: "/gholam/chat/new", element: <GholamChatNew /> },
+			{ path: "/gholam/chat/:chatId", element: <GholamChatView /> },
 			{ path: "/routines/:id/runs/:runId", element: <RunDetailView /> },
 			{ path: "/inbox", element: <InboxView /> },
 			{ path: "/marketplace", element: <MarketplaceView /> },
 			{ path: "/skills", element: <SkillsView /> },
+			{ path: "/prompts/library", element: <PromptsLibrary /> },
+			{ path: "/prompts/discover", element: <PromptsDiscover /> },
+			{ path: "/prompts/share/:slug", element: <PromptsShare /> },
 			{ path: "/kb", element: <KbView /> },
 			{ path: "/integrations", element: <IntegrationsView /> },
 			{ path: "/settings", element: <SettingsView /> },
 			{ path: "/onboarding", element: <OnboardingView /> },
+			// §3 + §4 of docs/GENERATIVE.md — pre-update preview + studio shell.
+			// /studio (no pane) is the 3-col grid; /studio/:pane focuses on a single pane.
+			// Worker J (Studio) owns these routes; do not move.
+			{ path: "/studio", element: <StudioView /> },
+			{ path: "/preview/:route", element: <PreviewView /> },
+			{ path: "/studio/:pane", element: <StudioView /> },
+			// Storefront (§1 of docs/STOREFRONT.md) — discovery, sections, detail.
+			{ path: "/storefront", element: <StorefrontHome /> },
+			{ path: "/storefront/search", element: <StorefrontSearch /> },
+			{ path: "/storefront/:section", element: <StorefrontSection /> },
+			{ path: "/storefront/:section/:id", element: <StorefrontDetail /> },
 		],
 	},
 ]);

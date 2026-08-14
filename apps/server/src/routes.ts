@@ -41,6 +41,18 @@ import { buildGitHubRouter } from "./routes-github.ts";
 import { buildAgentConfigRouter } from "./routes-agent-config.ts";
 import { buildPushRouter } from "./routes-push.ts";
 import { buildHarnessRouter } from "./routes-harness.ts";
+import { buildDiscoveryRouter } from "./discovery/routes.ts";
+import { buildStorefrontRouter } from "./routes-storefront.ts";
+import { buildPromptsRouter } from "./routes-prompts.ts";
+import { buildMcpInstallRouter } from "./routes-mcp-install.ts";
+import { buildSkillsInstallRouter } from "./routes-skills-install.ts";
+import { buildStorefrontInstalledRouter } from "./routes-storefront-installed.ts";
+import { buildGholamChatsRouter } from "./routes-gholam-chats.ts";
+import { buildLLMRouter } from "./routes-llm.ts";
+import { buildGenuiRouter } from "./routes-genui.ts";
+import { buildPreviewRouter } from "./routes-preview.ts";
+import { getMcpHealthProbe } from "./mcp-health.ts";
+import { buildMcpHealthRouter } from "./routes-mcp-health.ts";
 import { startCustomProvidersWatcher } from "./custom-providers.ts";
 import type { RoutinesRunner } from "./routines-runner.ts";
 import type { BridgeSupervisor } from "./bridge-supervisor.ts";
@@ -270,6 +282,29 @@ export function buildRouter(
 	app.route("/onboarding", buildOnboardingRouter());
 
 	app.route("/", buildHarnessRouter(bridge));
+	app.route("/", buildPromptsRouter());
+	app.route("/", buildDiscoveryRouter());
+	app.route("/", buildStorefrontRouter());
+	app.route("/", buildMcpHealthRouter(getMcpHealthProbe()));
+	// Per-section install endpoints + installed-flags snapshot.
+	// Mounted at the parent path used by the existing /api/mcp and /api/skills
+	// routers so client dispatch (InstallButton) lands on /api/mcp/install,
+	// /api/skills/install, /api/storefront/installed without prefix collisions.
+	app.route("/mcp", buildMcpInstallRouter());
+	app.route("/skills", buildSkillsInstallRouter());
+	app.route("/storefront", buildStorefrontInstalledRouter(marketplace, skills));
+	// Persistent Gholam chat history — §1 of docs/GENERATIVE.md. Mounted
+	// flat under "/gholam/chats" so the legacy "/api/gholam/*" control
+	// surface in buildHarnessRouter stays conflict-free.
+	app.route("/gholam/chats", buildGholamChatsRouter());
+	// Typed LLM registry — §2. GET /api/llm/providers + POST /api/llm/test.
+	app.route("/llm", buildLLMRouter());
+	// §3 + §4 of docs/GENERATIVE.md — generative UI stream + pre-update
+	// preview. Mounted below the existing routers so their more specific
+	// paths (`/api/genui/*`, `/api/preview/*`) take precedence; the routers
+	// declare leaf paths so no overlap with the ones above.
+	app.route("/", buildGenuiRouter());
+	app.route("/", buildPreviewRouter());
 	startCustomProvidersWatcher();
 	return app;
 }

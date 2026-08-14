@@ -12,9 +12,11 @@ import type { FilePathMatch, SlashCommand } from "@omp-deck/protocol";
 
 import { api } from "@/lib/api";
 import { FilePathPicker } from "@/components/composer/FilePathPicker";
-import { SlashCommandPicker } from "@/components/composer/SlashCommandPicker";
 import { Paperclip, ArrowUp, Square, X } from "lucide-react";
-import type { ImageAttachment } from "@omp-deck/protocol";
+import type { ImageAttachment, PromptRecommendation } from "@omp-deck/protocol";
+
+import { SlashCommandPicker } from "@/components/composer/SlashCommandPicker";
+import { PromptSuggestions } from "@/components/PromptSuggestions";
 
 import { selectActiveSession, useStore } from "@/lib/store";
 import { useComposerHistory } from "@/lib/use-composer-history";
@@ -208,6 +210,103 @@ export function Composer() {
 	const [pathSelected, setPathSelected] = useState(0);
 	const [caretPos, setCaretPos] = useState(0);
 	const lastFetchRef = useRef(0);
+
+	// ─── Prompt suggestions + {{ autocomplete ────────────────────────────────
+	//
+	// `<PromptSuggestions />` mounts when the composer is focused, the draft
+	// is empty, and 5s have passed since the last keystroke. The 5s idle
+	// timer is reset on every draft change; cleared on send/dismiss.
+	const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+	const lastEditRef = useRef(Date.now());
+	const [variableCandidates, setVariableCandidates] = useState<string[]>([]);
+	const [variableSelected, setVariableSelected] = useState(0);
+
+	useEffect(() => {
+		// Tick once per second; flip the suggestions panel on when the
+		// composer has been idle for ≥ 5s and is empty. Once the user
+		// types, lastEditRef resets and the panel hides again.
+		const t = window.setInterval(() => {
+			if (!taRef.current) return;
+			const empty = draft.trim().length === 0 && images.length === 0;
+			const idle = Date.now() - lastEditRef.current >= 5000;
+			setSuggestionsOpen(empty && idle);
+		}, 1000);
+		return () => window.clearInterval(t);
+	}, [draft, images]);
+
+	// `{{<token>` mention — same shape as the file-path picker but sourced
+	// from the cached prompt library's union of `variables[]`. The chip
+	// shows when the caret sits inside an unterminated `{{ ... `.
+	const variableRange = useMemo<{ start: number; end: number; token: string } | null>(() => {
+		const before = draft.slice(0, caretPos);
+		const m = before.match(/\{\{\s*([a-zA-Z_][\w.-]*)$/);
+		if (!m) return null;
+		const token = m[1] ?? "";
+		const start = caretPos - token.length - 2; // index of the opening `{{`
+		return { start, end: caretPos, token };
+	}, [draft, caretPos]);
+
+	const promptsLibraryLocal = useStore((s) => s.promptsLibrary);
+	const variableRangeToken = variableRange?.token;
+
+	useEffect(() => {
+		if (!variableRange) {
+			setVariableCandidates([]);
+			return;
+		}
+		const set = new Set<string>();
+		for (const p of promptsLibraryLocal) {
+			for (const v of p.variables ?? []) set.add(v);
+		}
+		const all = [...set].sort();
+		const q = variableRange.token.toLowerCase();
+		const filtered = q ? all.filter((v) => v.toLowerCase().includes(q)) : all;
+		setVariableCandidates(filtered.slice(0, 12));
+		setVariableSelected(0);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [variableRangeToken, promptsLibraryLocal]);
+
+	const pickVariable = useCallback(
+		(name: string): void => {
+			if (!variableRange) return;
+			setDraft((prev) => {
+				const before = prev.slice(0, variableRange.start);
+				const after = prev.slice(variableRange.end);
+				return `${before}{{${name}}}${after}`;
+			});
+			queueMicrotask(() => {
+				const ta = taRef.current;
+				if (!ta) return;
+				const pos = variableRange.start + name.length + 4; // `{{name}}` len
+				ta.setSelectionRange(pos, pos);
+				setCaretPos(pos);
+				ta.focus();
+				autoresize();
+			});
+		},
+		[autoresize, variableRange],
+	);
+
+	const onSuggestionPick = useCallback(
+		(rec: PromptRecommendation): void => {
+			// Insert the prompt body at the caret (overwriting any partial draft).
+			setDraft(rec.prompt.body);
+			useStore.getState().promptUsageBump(rec.prompt.id);
+			setSuggestionsOpen(false);
+			queueMicrotask(() => {
+				const ta = taRef.current;
+				if (!ta) return;
+				const end = rec.prompt.body.length;
+				ta.setSelectionRange(end, end);
+				setCaretPos(end);
+				ta.focus();
+				autoresize();
+			});
+		},
+		[autoresize],
+	);
+
+
 
 	interface MentionRange {
 		token: string;
@@ -506,6 +605,30 @@ export function Composer() {
 		// slash picker does. Slash and file-path pickers are mutually exclusive
 		// (slash anchors at draft start; file-path triggers on `@` anywhere) so
 		// the if-else cascade is safe.
+		const variableOpen = variableCandidates.length > 0 && variableRange !== null;
+		if (variableOpen) {
+		if (e.key === "ArrowDown") {
+			e.preventDefault();
+			setVariableSelected((i) => Math.min(i + 1, variableCandidates.length - 1));
+			return;
+		}
+		if (e.key === "ArrowUp") {
+			e.preventDefault();
+			setVariableSelected((i) => Math.max(i - 1, 0));
+			return;
+		}
+		if (e.key === "Enter" || e.key === "Tab") {
+			e.preventDefault();
+			const choice = variableCandidates[variableSelected] ?? variableCandidates[0];
+			if (choice) pickVariable(choice);
+			return;
+		}
+		if (e.key === "Escape") {
+			e.preventDefault();
+			setVariableCandidates([]);
+			return;
+		}
+		}
 		if (pathOpen) {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
@@ -690,11 +813,24 @@ export function Composer() {
 						onPick={pickSlashCommand}
 						onSelectionChange={setSlashSelected}
 					/>
+					<VariablePicker
+					candidates={variableCandidates}
+					selectedIndex={variableSelected}
+					onPick={pickVariable}
+					onSelectionChange={setVariableSelected}
+					/>
 					<FilePathPicker
 						matches={pathMatches}
 						selectedIndex={pathSelected}
 						onPick={pickFilePath}
 						onSelectionChange={setPathSelected}
+					/>
+					<PromptSuggestions
+					cwd={sessionCwd}
+					visible={suggestionsOpen}
+					query={draft}
+					onPick={onSuggestionPick}
+					onDismiss={() => setSuggestionsOpen(false)}
 					/>
 					<input
 						ref={fileRef}
@@ -736,7 +872,9 @@ export function Composer() {
 						}
 						onChange={(e) => {
 							setDraft(e.target.value);
-							setCaretPos(e.target.selectionStart ?? e.target.value.length);
+							setCaretPos(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+							lastEditRef.current = Date.now();
+							setSuggestionsOpen(false);
 							autoresize();
 						}}
 						onSelect={(e) => {
@@ -854,4 +992,71 @@ function formatKb(bytes: number): string {
 	if (bytes < 1024) return `${bytes}B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}K`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
+}
+
+/**
+ * `{{variable` autocomplete picker. Mirrors the file-path picker's
+ * controlled-from-outside contract so the composer's `handleKey` keeps the
+ * single source of keyboard truth. Renders nothing when there are no
+ * candidates so the composer can mount it unconditionally.
+ */
+function VariablePicker({
+	candidates,
+	selectedIndex,
+	onPick,
+	onSelectionChange,
+}: {
+	candidates: string[];
+	selectedIndex: number;
+	onPick: (name: string) => void;
+	onSelectionChange: (i: number) => void;
+}) {
+	const listRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const el = listRef.current?.children[selectedIndex] as HTMLElement | undefined;
+		el?.scrollIntoView({ block: "nearest" });
+	}, [selectedIndex]);
+
+	if (candidates.length === 0) return null;
+
+	return (
+		<div
+			role="listbox"
+			aria-label="Variables"
+			className={cn(
+				"absolute bottom-full left-0 right-0 mb-1 max-h-[200px] overflow-y-auto",
+				"rounded-md border border-line bg-paper-2 shadow-[0_8px_24px_-8px_rgba(26,24,20,0.25)]",
+				"font-mono text-[13px]",
+			)}
+		>
+			<div ref={listRef}>
+				{candidates.map((name, i) => {
+					const active = i === selectedIndex;
+					return (
+						<button
+							key={name}
+							type="button"
+							role="option"
+							aria-selected={active}
+							onClick={() => onPick(name)}
+							onMouseEnter={() => onSelectionChange(i)}
+							onMouseDown={(e) => e.preventDefault()}
+							className={cn(
+								"block w-full px-3 py-1.5 text-left",
+								active ? "bg-accent-soft/60" : "hover:bg-paper-3/60",
+							)}
+						>
+							<span className={cn("font-medium", active ? "text-accent" : "text-ink")}>
+								{name}
+							</span>
+						</button>
+					);
+				})}
+			</div>
+			<div className="border-t border-line bg-paper px-3 py-1 font-mono text-2xs text-ink-3">
+				↑↓ navigate · enter/tab pick · esc dismiss
+			</div>
+		</div>
+	);
 }

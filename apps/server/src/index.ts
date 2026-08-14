@@ -45,8 +45,44 @@ import {
 } from "./notifications/index.ts";
 import { WebPushChannel } from "./notifications/channels/web-push.ts";
 import type { RestartServerResponse } from "@omp-deck/protocol";
+import { createHash } from "node:crypto";
+import { watch as fsWatch } from "node:fs";
 
 const log = logger("server");
+
+// Deck rebuild state lives in its own module so routes-harness can read it
+// without an import cycle. Re-export the setters here for legacy callers.
+export { setLatestDeployState, getLatestDeployState } from "./deploy-state.ts";
+
+// ─── Bundle-hash watcher ───────────────────────────────────────────────────────
+// Watches the web dist's index.html for content changes and pushes a
+// `reload_available` frame so the client can soft-reload with the new
+// bundle. Falls back to a full ?v= reload if the soft path is unavailable.
+let lastBundleHash: string | undefined;
+function watchBundle(distDir: string | undefined, hub: { broadcast: (frame: { type: "reload_available"; bundleHash: string; ts: number }) => void }): void {
+	if (!distDir) return;
+	const indexHtml = path.join(distDir, "index.html");
+	let watcher: ReturnType<typeof fsWatch> | undefined;
+	try {
+		watcher = fsWatch(indexHtml, { persistent: false }, async () => {
+			await emitReload();
+		});
+	} catch (err) {
+		log.warn(`bundle watcher setup failed (${indexHtml})`, err);
+		return;
+	}
+	async function emitReload(): Promise<void> {
+		const file = Bun.file(indexHtml);
+		if (!(await file.exists())) return;
+		const buf = await file.arrayBuffer();
+		const hash = createHash("sha256").update(Buffer.from(buf)).digest("hex").slice(0, 16);
+		if (hash === lastBundleHash) return;
+		lastBundleHash = hash;
+		log.info(`web bundle changed; broadcasting reload_available (${hash})`);
+		hub.broadcast({ type: "reload_available", bundleHash: hash, ts: Date.now() });
+	}
+	process.on("beforeExit", () => watcher?.close());
+}
 
 async function main(): Promise<void> {
 	const config = loadConfig();
@@ -251,6 +287,7 @@ async function main(): Promise<void> {
 	});
 
 	log.info(`listening on http://${server.hostname}:${server.port}`);
+	watchBundle(config.webDist, ws);
 
 	// Background: prime the npm registry update check cache so the
 	// /api/version route returns a real answer on first call. Fire-and-
@@ -376,13 +413,26 @@ async function serveStatic(req: Request, root: string): Promise<Response> {
 
 	const direct = Bun.file(resolved);
 	if (await direct.exists()) {
-		return new Response(direct);
+		// HTML must revalidate so the latest bundle is picked up; hashed
+		// assets (vite writes /assets/<name>-<hash>.js) are immutable.
+		const headers: Record<string, string> = {};
+		if (rel.endsWith(".html")) {
+			headers["cache-control"] = "no-cache, must-revalidate";
+		} else if (/\.(js|css|svg|woff2)$/.test(rel)) {
+			headers["cache-control"] = "public, max-age=31536000, immutable";
+		}
+		return new Response(direct, headers);
 	}
 
 	// SPA fallback — serve index.html so client-side routing works.
 	const index = Bun.file(path.join(rootResolved, "index.html"));
 	if (await index.exists()) {
-		return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+		return new Response(index, {
+			headers: {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-cache, must-revalidate",
+			},
+		});
 	}
 	return new Response("not found", { status: 404 });
 }

@@ -28,7 +28,8 @@ import { logger } from "./log.ts";
 import { marketplaceExtras } from "./marketplace-extras.ts";
 import { getMarketplace } from "./marketplace-service.ts";
 import { skillsMP } from "./skillsmp.ts";
-import { gholam } from "./gholam.ts";
+import { gholam, parseRemoteOwnerRepo } from "./gholam.ts";
+import { getLatestDeployState } from "./deploy-state.ts";
 import { lifecycle } from "./lifecycle.ts";
 import { workflowz } from "./workflowz.ts";
 import { titleService } from "./session-title.ts";
@@ -305,6 +306,50 @@ export function buildHarnessRouter(bridge: AgentBridge): Hono {
 	app.post("/gholam/heartbeat", async (c) => {
 		const body = (await c.req.json().catch(() => ({}))) as { intervalMs?: number };
 		return c.json(await gholam.setHeartbeat(body.intervalMs ?? 30_000));
+	});
+
+	// ── deploy_state snapshot ──────────────────────────────────────────────────
+	// Read the latest DeployState. The live channel is the `deploy_state`
+	// broadcast over WS; this is the catch-up read for a fresh tab.
+	app.get("/deploy/state", async (c) => {
+		return c.json(getLatestDeployState());
+	});
+
+	// ── gholam edit: push a file change through the sidecar's github MCP ─────
+	// Body: { path, content, message?, createPr?, cwd? }. The owner/repo is
+	// resolved from `cwd` (default OMP_DECK_DEFAULT_CWD) via git, falling
+	// back to OMP_DECK_REPO. Returns { ok, ref, contentSha } on success or
+	// { ok: false, error }.
+	app.post("/gholam/edit", async (c) => {
+		let body: { path?: string; content?: string; message?: string; createPr?: boolean; cwd?: string };
+		try {
+			body = (await c.req.json()) as typeof body;
+		} catch {
+			return c.json({ ok: false, error: "invalid json" }, 400);
+		}
+		const { path: filePath, content, message } = body;
+		if (!filePath || typeof content !== "string") {
+			return c.json({ ok: false, error: "path and content required" }, 400);
+		}
+		const cwd = body.cwd?.trim() || process.env.OMP_DECK_DEFAULT_CWD || process.cwd();
+		const repo = await parseRemoteOwnerRepo(cwd);
+		if (!repo) {
+			return c.json({ ok: false, error: "could not resolve owner/repo (no git remote.origin.url and OMP_DECK_REPO unset)" }, 400);
+		}
+		const result = await gholam.edit({
+			owner: repo.owner,
+			repo: repo.repo,
+			path: filePath,
+			content,
+			...(message ? { message } : {}),
+		});
+		if (!result.ok) {
+			return c.json({ ok: false, error: result.error ?? "edit failed" }, 502);
+		}
+		const out: { ok: true; ref?: string; contentSha?: string; prUrl?: string } = { ok: true };
+		if (result.ref !== undefined) out.ref = result.ref;
+		if (result.contentSha !== undefined) out.contentSha = result.contentSha;
+		return c.json(out);
 	});
 
 	return app;

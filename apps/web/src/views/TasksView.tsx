@@ -283,6 +283,7 @@ export function TasksView() {
 									setShowStateConfig((v) => !v);
 									setInspectorOpen(true);
 								}}
+								data-tooltip-key="kanban.columns-edit"
 								className="btn-ghost ml-auto h-7 px-2 text-xs"
 								title="Edit columns"
 							>

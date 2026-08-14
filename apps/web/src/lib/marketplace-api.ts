@@ -1,5 +1,7 @@
 import type {
 	AddMarketplaceRequest,
+	DryRunInstallRequest,
+	DryRunInstallResponse,
 	InstallPluginRequest,
 	InstallPluginResponse,
 	ListMarketplaceResponse,
@@ -25,8 +27,39 @@ export const marketplaceApi = {
 	list(): Promise<ListMarketplaceResponse> {
 		return req<ListMarketplaceResponse>("/marketplace");
 	},
-	install(body: InstallPluginRequest): Promise<InstallPluginResponse> {
-		return req<InstallPluginResponse>("/marketplace/install", {
+	async install(body: InstallPluginRequest): Promise<InstallPluginResponse> {
+		// Inline rather than going through `req()` — the install endpoint
+		// returns `{ error: "marketplace_not_found" | ... }` on 4xx, and we
+		// surface that structured error code in the toast. Other endpoints
+		// just need the status line.
+		const res = await fetch(`${BASE}/marketplace/install`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const text = await res.text();
+		let parsed: unknown = {};
+		try {
+			parsed = text ? JSON.parse(text) : {};
+		} catch {
+			parsed = { message: text };
+		}
+		if (!res.ok) {
+			const e = parsed as { error?: string; message?: string; hint?: string };
+			const err = new Error(e.message ?? e.error ?? `HTTP ${res.status}`) as Error & {
+				status?: number;
+				code?: string;
+				hint?: string;
+			};
+			err.status = res.status;
+			if (e.error) err.code = e.error;
+			if (e.hint) err.hint = e.hint;
+			throw err;
+		}
+		return parsed as InstallPluginResponse;
+	},
+	dryRun(body: DryRunInstallRequest): Promise<DryRunInstallResponse> {
+		return req<DryRunInstallResponse>("/marketplace/install/dry-run", {
 			method: "POST",
 			body: JSON.stringify(body),
 		});

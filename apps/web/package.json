@@ -10,6 +10,7 @@
 		"typecheck": "tsc -b --noEmit"
 	},
 	"dependencies": {
+		"@ai-sdk/react": "^4.0.68",
 		"@codemirror/commands": "^6.10.4",
 		"@codemirror/lang-css": "^6.3.1",
 		"@codemirror/lang-html": "^6.4.12",
@@ -31,6 +32,7 @@
 		"@omp-deck/protocol": "workspace:*",
 		"@uiw/codemirror-theme-github": "^4.25.11",
 		"@xyflow/react": "^12.10.2",
+		"ai": "^7.0.65",
 		"clsx": "^2.1.1",
 		"codemirror": "^6.0.2",
 		"highlight.js": "^11.10.0",

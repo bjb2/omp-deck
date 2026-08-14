@@ -7,11 +7,15 @@
  * render it, and keeping it out of the global store avoids re-rendering the
  * whole app tree every time, say, the install-prompt availability flips.
  */
+/// <reference types="vite/client" />
 import { useEffect, useState } from "react";
 import { pushApi } from "./push-api";
 
 /** Register the service worker. Safe to call multiple times; no-ops if unsupported. */
 export function registerServiceWorker(): void {
+	// Skip in dev — Vite's HMR is the source of truth, and a caching SW
+	// would race the dev server for the same URLs and serve stale shells.
+	if (!import.meta.env.PROD) return;
 	if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
 	void navigator.serviceWorker.register("/sw.js").catch((err) => {
 		// eslint-disable-next-line no-console

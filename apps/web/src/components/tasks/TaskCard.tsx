@@ -84,6 +84,8 @@ export function TaskCardBody({ task, lifted }: { task: Task; lifted: boolean }) 
 	const brief = formatBriefTime(stamp);
 	return (
 		<div
+			data-context-key="kanban.card"
+			data-task-id={task.id}
 			className={cn(
 				"select-none rounded-md border bg-paper-2 px-3 py-2 text-sm transition-shadow",
 				lifted

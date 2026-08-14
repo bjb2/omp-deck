@@ -1,4 +1,5 @@
 import type { ClientFrame, ServerFrame } from "@omp-deck/protocol";
+import * as idbQueue from "./idb-queue";
 
 type Listener = (frame: ServerFrame) => void;
 type StatusListener = (status: WsStatus) => void;
@@ -74,6 +75,13 @@ export class WsClient {
 		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
 			this.socket.send(JSON.stringify(frame));
 		} else {
+			// Persist prompt frames to IndexedDB so the user's typing
+			// survives a full tab close while offline. Other queued
+			// frame types stay in-memory; the WS reconnects within
+			// the backoff window and `flushQueue` will drain them.
+			if (frame.type === "prompt") {
+				void idbQueue.enqueue(frame as unknown as { id?: string; [k: string]: unknown });
+			}
 			this.queue.push(frame);
 		}
 	}
@@ -104,6 +112,15 @@ export class WsClient {
 	}
 
 	private flushQueue(): void {
+		// First: drain any persisted prompts from IDB. They survived a
+		// tab close, so they go out before the in-memory tail.
+		void idbQueue.drain(async (frame) => {
+			if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+				this.socket.send(JSON.stringify(frame));
+				return true;
+			}
+			return false;
+		});
 		while (this.queue.length > 0 && this.socket?.readyState === WebSocket.OPEN) {
 			const f = this.queue.shift()!;
 			this.socket.send(JSON.stringify(f));
@@ -119,4 +136,16 @@ export class WsClient {
 			this.connect();
 		}, delay);
 	}
+}
+
+/**
+ * Filter helper for chat-thread subscribers: returns a subset of frames
+ * related to a single chat. Matches the runtime-loop frames (§1 of
+ * docs/GENERATIVE.md).
+ */
+export function isGholamChatFrame(chatId: string): (frame: ServerFrame) => boolean {
+	return (frame) =>
+		(frame.type === "gholam_chat_message" && frame.chatId === chatId) ||
+		(frame.type === "gholam_chat_state" && frame.chatId === chatId) ||
+		(frame.type === "gholam_chat_usage" && frame.chatId === chatId);
 }

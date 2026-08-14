@@ -113,3 +113,19 @@ providers:
       contextWindow: 200000
     - id: nghi/auto
       contextWindow: 200000
+
+  # MiniMax — OpenAI-compat public endpoint (per docs/GENERATIVE.md §2).
+  minimax:
+    baseUrl: https://api.minimax.io/v1
+    apiKey: ${OMP_PROVIDER_MINIMAX_API_KEY}
+    api: openai-completions
+    authHeader: true
+    discovery:
+      type: openai-models-list
+    models:
+    - id: MiniMax-M3
+      contextWindow: 200000
+    - id: MiniMax-M3:medium
+      contextWindow: 200000
+    - id: MiniMax-M3:low
+      contextWindow: 200000

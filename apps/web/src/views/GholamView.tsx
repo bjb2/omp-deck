@@ -16,6 +16,7 @@ import { Heart, Pause, Play, Plus, Trash2 } from "lucide-react";
 
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/Button";
+import { DeployStatusBadge } from "@/components/DeployStatusBadge";
 
 interface GholamState {
 	running: boolean;
@@ -102,8 +103,8 @@ export function GholamView(): JSX.Element {
 		<Layout
 			sidebar={
 				<div className="flex h-full flex-col gap-3 p-3 text-sm">
-					<div className="meta">Sidecar</div>
-					<div className="rounded-md border border-line bg-paper-2 p-3 space-y-1">
+					<div className="meta" data-tooltip-key="gholam.sidebar">Sidecar</div>
+					<div data-tooltip-key="gholam.sidebar" className="rounded-md border border-line bg-paper-2 p-3 space-y-1">
 						<div className="flex items-center gap-2">
 							{state?.running ? (
 								<span className="h-2 w-2 rounded-full bg-success animate-pulse" />
@@ -111,6 +112,7 @@ export function GholamView(): JSX.Element {
 								<span className="h-2 w-2 rounded-full bg-danger" />
 							)}
 							<span className="font-medium">{state?.running ? "running" : "stopped"}</span>
+							<DeployStatusBadge />
 						</div>
 						<dl className="space-y-1 text-xs text-ink-3">
 							{state?.pid ? (<><dt>pid</dt><dd className="font-mono">{state.pid}</dd></>) : null}
@@ -119,16 +121,17 @@ export function GholamView(): JSX.Element {
 						</dl>
 					</div>
 					{state?.running ? (
-						<Button onClick={() => call("/api/gholam/stop", { method: "POST" })} disabled={busy} size="sm" variant="ghost">
+						<Button onClick={() => call("/api/gholam/stop", { method: "POST" })} disabled={busy} size="sm" variant="ghost" data-tooltip-key="gholam.sidebar.start">
 							<Pause className="h-3.5 w-3.5" /> stop
 						</Button>
 					) : (
-						<Button onClick={() => call("/api/gholam/start", { method: "POST" })} disabled={busy} size="sm">
+						<Button onClick={() => call("/api/gholam/start", { method: "POST" })} disabled={busy} size="sm" data-tooltip-key="gholam.sidebar.start">
 							<Play className="h-3.5 w-3.5" /> start
 						</Button>
 					)}
-					<div className="meta mt-3">Heartbeat</div>
+					<div className="meta mt-3" data-tooltip-key="gholam.sidebar.heartbeat">Heartbeat</div>
 					<select
+						data-tooltip-key="gholam.sidebar.heartbeat"
 						className="rounded-md border border-line bg-paper-2 px-2 py-1 text-sm"
 						value={state?.heartbeatMs ?? 30000}
 						onChange={(e) => call("/api/gholam/heartbeat", {
@@ -158,7 +161,7 @@ export function GholamView(): JSX.Element {
 					<div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-paper px-3">
 						<div className="meta">Gholam</div>
 						<div className="flex-1" />
-						<Button onClick={() => void savePriorities()} disabled={busy} size="sm">
+						<Button onClick={() => void savePriorities()} disabled={busy} size="sm" data-tooltip-key="gholam.save">
 							save priorities
 						</Button>
 					</div>
@@ -190,7 +193,7 @@ export function GholamView(): JSX.Element {
 									<option value="project">project scope</option>
 									<option value="global">global scope</option>
 								</select>
-								<Button onClick={addPriority} size="sm" variant="ghost">
+								<Button onClick={addPriority} size="sm" variant="ghost" data-tooltip-key="gholam.priority.add">
 									<Plus className="h-3.5 w-3.5" /> add
 								</Button>
 							</div>
@@ -204,7 +207,7 @@ export function GholamView(): JSX.Element {
 							) : (
 								<ul className="space-y-2">
 									{priorities.map((p, i) => (
-										<li key={p.id ?? i} className="flex items-start gap-2 rounded-md border border-line bg-paper-2 p-2">
+										<li key={p.id ?? i} data-context-key="gholam.priority" data-tooltip-key="gholam.priority" data-priority-idx={i} className="flex items-start gap-2 rounded-md border border-line bg-paper-2 p-2">
 											<div className="flex-1">
 												<div className="text-sm font-medium">{p.label}</div>
 												<div className="font-mono text-2xs text-ink-3">{p.cwd} · {p.scope}</div>
@@ -212,6 +215,7 @@ export function GholamView(): JSX.Element {
 											<button
 												type="button"
 												className="btn-ghost"
+												data-tooltip-key="gholam.priority.remove"
 												onClick={() => removePriority(i)}
 												aria-label="remove"
 											>

@@ -16,6 +16,11 @@
 export { validateRoutineSpec } from "./validate";
 export type { ValidationError, ValidationResult } from "./validate";
 
+// Re-export the gholam permission registry. Canonical source so the
+// sidecar (apps/gholam) and server (apps/server) reference the same table.
+export { GHOLAM_PERMISSIONS } from "./permissions";
+export type { GholamPermission } from "./permissions";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REST shapes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -809,8 +814,10 @@ export interface ExtUiDialogResponse {
 	timedOut?: true;
 }
 
-/** Client → Server. */
-export type ClientFrame =
+/** Client → Server. Internal name; consumers should use the augmented
+ *  `ClientFrame` re-export below, which adds `gholam_command` for the
+ *  gholam permissions gate. */
+type _ClientFrameBase =
 	| { type: "ping" }
 	| { type: "subscribe"; sessionId: string }
 	| { type: "unsubscribe"; sessionId: string }
@@ -878,8 +885,37 @@ export type ClientFrame =
 			editedContent?: string;
 	  };
 
-/** Server → Client. */
-export type ServerFrame =
+/**
+ * Client → Server. A gholam-mediated command. The deck's `gholam_rest`
+ * surface and the gholam sidecar (via the deck → sidecar WS) both
+ * submit frames of this shape; the server-side gate in
+ * `apps/server/src/auth/gholam-permissions.ts` inspects
+ * `requiredPermissions` and consults the user's grant file before
+ * dispatching. Empty/missing permissions default to no gating.
+ */
+export interface GholamCommandFrame {
+	type: "gholam_command";
+	method: string;
+	requiredPermissions?: GholamPermissionKey[];
+	[key: string]: unknown;
+}
+
+/**
+ * String-typed permission key. Mirrors `GholamPermission` in
+ * `apps/gholam/src/permissions.ts`. Defined here as a string alias so the
+ * protocol package stays free of sidecar-imports — the sidecar module is
+ * the source of truth at runtime.
+ */
+export type GholamPermissionKey = string;
+
+/** Client → Server. Augmented with `gholam_command` for the gholam
+ *  permissions gate. Same union pattern as `ServerFrame`. */
+export type ClientFrame = _ClientFrameBase | GholamCommandFrame;
+
+/** Server → Client. Internal name; consumers should use the augmented
+ *  `ServerFrame` re-export below, which adds `reload_available` and
+ *  `deploy_state` variants for the soft-reload + deploy-state features. */
+type _ServerFrameBase =
 	| { type: "hello"; connectionId: string }
 	| { type: "pong" }
 	| { type: "subscribed"; sessionId: string; snapshot: SessionSnapshot }
@@ -1074,7 +1110,111 @@ export type ServerFrame =
 			actionUrl?: string;
 			timestamp: string;
 	  }
-	| { type: "error"; sessionId?: string; error: string };
+	/**
+	 * Storefront catalog event: an item appeared (live SSE pulse), was mutated
+	 * in place, or was removed entirely. Pushed by the deck's seed loader,
+	 * marketplace-watcher, KB-watcher, and skill-scanner. Web subscribers
+	 * merge into the zustand `storefront.itemsBySection` map and render a
+	 * pulse ring on arrival.
+	 */
+	| { type: "store_item_added"; section: StoreSection; item: StoreItem }
+	| { type: "store_item_updated"; section: StoreSection; item: StoreItem }
+	| { type: "store_item_removed"; section: StoreSection; id: string }
+	/**
+	 * Bulk fan-out: a discovery provider returned a fresh result batch.
+	 * The web zustand store merges into `livePulseIds` for the SSE pulse
+	 * effect. Throttled per-provider by the WsHub's broadcast throttle.
+	 */
+	| { type: "discovery_added"; hits: DiscoveryHit[] }
+	/**
+	 * MCP server probe snapshot. Pushed by the McpHealthProbe loop after
+	 * each successful (or failed) tools/list round. The WsHub throttle
+	 * caps at 1/sec for this type so a 30s probe cadence across many
+	 * servers can't flood the bus.
+	 */
+	| { type: "mcp_health"; status: McpHealthStatus }
+	/**
+	 * Persistent Gholam chat — a new message landed in the append-only log.
+	 * Broadcast on every assistant / user / tool row insert so the chat-list
+	 * view and the chat-thread view reconcile without per-chat subscribe.
+	 */
+	| { type: "gholam_chat_message"; chatId: string; message: GholamChatMessageWire }
+	/**
+	 * Persistent Gholam chat — the state machine transitioned (`running`,
+	 * `paused`, `awaiting_user`, `awaiting_tool`, `completed`, `failed`). The
+	 * runtime loop and the rest/cancel routes emit these. Throttled at 1s
+	 * (default) so a busy loop can't flood the bus; broadcast (not per-chat
+	 * subscribe) so the list view re-renders.
+	 */
+	| { type: "gholam_chat_state"; chatId: string; state: GholamChatState; usage?: ChatUsage }
+	/**
+	 * Persistent Gholam chat — usage telemetry update. Carried separately
+	 * from `gholam_chat_state` so the inspector pane can update cost without
+	 * reading the full row on every delta. Cheap: a few ints.
+	 */
+	| { type: "gholam_chat_usage"; chatId: string; usage: ChatUsage }
+	| { type: "error"; sessionId?: string; error: string }
+	/**
+	 * GenUI delta: one frame streamed by `GET /api/genui/stream` (or a
+	 * sidecar preview pass). The node carries a full `GenComponent` (see
+	 * the GenComponent discriminated union below) the renderer dispatches
+	 * against the whitelist. `done` frames are terminal — `finalHash`
+	 * lets the client dedupe replays of an identical stream.
+	 */
+	| {
+			type: "genui_delta";
+			route: string;
+			frame:
+				| { kind: "frame"; node: GenComponent }
+				| { kind: "done"; finalHash: string };
+			/** Mirrors the client allowlist version so a stale client can
+			 *  refuse to render before invoking the renderer. */
+			allowlistVersion: string;
+	  };
+
+/**
+ * Phase of the deck's own build/deploy pipeline. Mirrors the state machine
+ * `idle → queued → building → deploying → verifying → healthy | failed`.
+ * `ref` is the git sha or openship deployment id; `triggeredBy` attributes
+ * the action (gholam / user / ci); `logTail` is the trailing bytes of the
+ * build/deploy output for the badge's tooltip.
+ */
+export type DeployPhase =
+	| "idle"
+	| "queued"
+	| "building"
+	| "deploying"
+	| "verifying"
+	| "healthy"
+	| "failed";
+
+export interface DeployState {
+	phase: DeployPhase;
+	triggeredBy: "gholam" | "user" | "ci";
+	ref?: string;
+	startedAt?: string;
+	updatedAt: string;
+	logTail?: string;
+	error?: string;
+}
+
+export interface ReloadAvailableFrame {
+	type: "reload_available";
+	bundleHash: string;
+	ts: number;
+}
+
+export interface DeployStateFrame {
+	type: "deploy_state";
+	state: DeployState;
+}
+
+/**
+ * Server → Client. Augmented with `reload_available` (server pushes when
+ * the bundle hash changes; client soft-reloads) and `deploy_state`
+ * (live build/deploy phase for the DeployStatusBadge).
+ */
+export type ServerFrame = _ServerFrameBase | ReloadAvailableFrame | DeployStateFrame;
 
 /** Severity for a deck notification. Drives the audio tone + visual styling. */
 export type NotificationLevel = "info" | "warn" | "error" | "critical";
@@ -1091,6 +1231,84 @@ export interface NotificationPayload {
 	/** Optional deep-link the user can click to jump to the relevant view. */
 	actionUrl?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generative UI (§3 of docs/GENERATIVE.md) — shared component vocabulary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Action descriptor emitted by `<GenButton>` / `<GenForm>`. The kind
+ *  drives the wire routing (existing WS frames; no new channels). */
+export interface GenAction {
+	kind: "mcp_call" | "gholam_command" | "navigate" | "submit_prompt";
+	payload: Record<string, unknown>;
+}
+
+/** One field descriptor inside a `<GenForm>`. The renderer builds a real
+ *  `<input>` per field; rich pickers are deliberately absent from v1. */
+export interface GenField {
+	name: string;
+	label: string;
+	kind: "text" | "number" | "checkbox";
+	placeholder?: string;
+	defaultValue?: string | number | boolean;
+}
+
+/** Discriminated union of every whitelisted GenUI component. Mirrors the
+ *  client file `apps/web/src/lib/genui/components.ts` and the server
+ *  prompt-context file `apps/server/src/genui-allowlist.ts` — all three
+ *  must stay byte-identical for the discriminator to land in the same
+ *  branch on both sides. Bump `GENUI_ALLOWLIST_VERSION` (each mirror)
+ *  on breaking changes. */
+export type GenComponent =
+	| { type: "GenStack"; props?: { gap?: number }; children: GenNode[] }
+	| {
+			type: "GenRow";
+			props?: { gap?: number; align?: "start" | "center" | "end" };
+			children: GenNode[];
+	  }
+	| {
+			type: "GenGrid";
+			props?: { cols?: number; gap?: number };
+			children: GenNode[];
+	  }
+	| {
+			type: "GenText";
+			props?: { size?: "xs" | "sm" | "md" | "lg"; tone?: "default" | "muted" | "danger" | "accent" };
+			content: string;
+	  }
+	| { type: "GenMarkdown"; content: string }
+	| { type: "GenCode"; props?: { lang?: string }; content: string }
+	| { type: "GenImage"; props: { src: string; alt?: string } }
+	| { type: "GenVideo"; props: { src: string } }
+	| { type: "GenButton"; props: { label: string; action: GenAction } }
+	| { type: "GenAction"; props: GenAction }
+	| { type: "GenTable"; props: { headers: string[] }; rows: GenNode[][] }
+	| { type: "GenKeyValue"; entries: Array<{ key: string; value: GenNode }> }
+	| { type: "GenCard"; props?: { title?: string }; children: GenNode[] }
+	| {
+			type: "GenTabs";
+			props?: { default?: string };
+			tabs: Array<{ id: string; label: string; content: GenNode }>;
+	  }
+	| { type: "GenModal"; props: { title?: string; onClose: GenAction }; children: GenNode[] }
+	| { type: "GenForm"; props: { submit: GenAction; fields: GenField[] } };
+
+/** A node in the rendered tree. Components recursively contain nodes; a
+ *  bare string is rendered as an inline text leaf. Numbers / booleans /
+ *  null are coerced to text by the renderer. */
+export type GenNode = GenComponent | string | number | boolean | null;
+
+/** Wire shape streamed by `GET /api/genui/stream`. One line per frame;
+ *  the terminal `done` line carries a hash so the client can dedupe
+ *  replays. */
+export type GenFrame =
+	| { type: "frame"; node: GenComponent; allowlistVersion: string }
+	| { type: "done"; finalHash: string; allowlistVersion: string };
+
+/** Bumped on breaking changes to the GenComponent vocabulary. Clients refuse
+ *  to render frames tagged with a stale version; the server prompt-context
+ *  mirror (`apps/server/src/genui-allowlist.ts`) exports the same constant. */
+export const GENUI_ALLOWLIST_VERSION = "1.0.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool-call rendering hints (used by the web app to pick a renderer)
@@ -1960,6 +2178,342 @@ export interface AgentConfigBackup {
 	createdAt: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt library (§4 of docs/STOREFRONT.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where an imported prompt came from. `user` = local capture; the others
+ *  are populated when the user saves a result from the discovery view. */
+export interface PromptSource {
+	kind: "github" | "web" | "kb" | "user";
+	url: string;
+	capturedAt: string;
+}
+
+/** A single prompt record persisted as `~/.omp-deck/prompts/<id>.json`.
+ *  `variables` is the extracted handlebars list — always derived from
+ *  `body` on read so it can never drift from the source of truth. */
+export interface Prompt {
+	id: string;
+	title: string;
+	body: string;
+	category: string;
+	tags: string[];
+	variables: string[];
+	shareSlug?: string;
+	createdAt: string;
+	updatedAt: string;
+	usageCount: number;
+	lastUsedAt: string | null;
+	pinned: boolean;
+	source?: PromptSource;
+}
+
+/** Response body for `GET /api/prompts/library`. */
+export interface ListPromptsResponse {
+	prompts: Prompt[];
+}
+
+/** Body for `POST /api/prompts/library` (create). */
+export interface CreatePromptRequest {
+	title: string;
+	body: string;
+	category?: string;
+	tags?: string[];
+	share?: boolean;
+	source?: PromptSource;
+}
+
+/** Body for `PUT /api/prompts/library/:id` (partial update). */
+export interface UpdatePromptRequest {
+	title?: string;
+	body?: string;
+	category?: string;
+	tags?: string[];
+	share?: boolean;
+	pinned?: boolean;
+}
+
+/** Body for `POST /api/prompts/library/import`. Accepts a single Prompt
+ *  payload, a JSON string of one, or `{ url: "<github gist URL>" }` (the
+ *  server pulls gist content and treats the first file as the prompt body). */
+export interface ImportPromptRequest {
+	prompt?: Prompt;
+	url?: string;
+	rawJson?: string;
+}
+
+/** Signal that contributed to a recommendation. Used by the UI to render
+ *  the "why" tooltip without re-deriving the match. */
+export type PromptRecommendationSignal = "project" | "history" | "usage";
+
+/** Score breakdown for one recommendation. The `score` is the cosine
+ *  similarity over TF-IDF vectors (range 0–1); `why` is a human-readable
+ *  summary the UI shows next to the entry. */
+export interface PromptRecommendation {
+	prompt: Prompt;
+	score: number;
+	why: string;
+	matchedSignals: PromptRecommendationSignal[];
+}
+
+/** Response body for `GET /api/prompts/recommend`. */
+export interface ListPromptRecommendationsResponse {
+	recommendations: PromptRecommendation[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Storefront, Discovery, MCP Health (§1, §2, §3, §6 of docs/STOREFRONT.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A storefront section. Drives the navigation chip + the per-page route. */
+export type StoreSection = "plugins" | "mcps" | "skills" | "prompts";
+
+/** Single storefront item — one installable across the four sections. */
+export interface StoreItem {
+	id: string;
+	section: StoreSection;
+	name: string;
+	/** ≤140 chars; surfaced as the card subtitle / hero tagline. */
+	tagline: string;
+	/** Markdown body for the detail page "About" pane. */
+	description: string;
+	author: { name: string; url?: string; avatar?: string };
+	icon: string;
+	screenshots: string[];
+	ratings: { stars: number; count: number };
+	installs: number;
+	lastUpdated: string;
+	source: {
+		kind: "marketplace" | "github" | "web" | "kb";
+		url: string;
+		ref?: string;
+	};
+	versionHistory: { version: string; date: string; notes: string }[];
+	capabilities: { toolNames: string[]; categories: string[]; triggers: string[] };
+	installAction: {
+		kind: "marketplace" | "mcp" | "skill" | "prompt";
+		/** Opaque payload — the consumer (web + extensions) knows the shape per `kind`. */
+		payload: unknown;
+	};
+	/** First indexed within the last 24h. Drives the "New" chip. */
+	isNew?: boolean;
+	/** Server is currently pushing an SSE pulse for this item. */
+	isLive?: boolean;
+}
+
+/** Single discovery result from a provider search. */
+export interface DiscoveryHit {
+	id: string;
+	section: "plugins" | "mcps" | "skills" | "prompts" | "kb";
+	title: string;
+	tagline?: string;
+	/** ≤600 chars preview; truncated server-side. */
+	description?: string;
+	author?: { name: string; url?: string; avatar?: string };
+	iconUrl?: string;
+	/** Canonical "open" deep link — routes to the storefront detail page. */
+	url: string;
+	source: {
+		kind: "marketplace" | "github" | "web" | "kb" | "local";
+		/** Marketplace name | "owner/repo" | URL | KB path. */
+		ref: string;
+		fetchedAt: string;
+	};
+	/** First 2KB / first paragraph — preview snippet for the result card. */
+	snippet?: string;
+	capabilities?: { toolNames?: string[]; categories?: string[]; triggers?: string[] };
+	/** Server-computed relevance (0–1). */
+	score: number;
+	/** Provenance tags — shown under the title in the result row. */
+	signals: string[];
+}
+
+/** Per-MCP-server health row from the McpHealthProbe loop. */
+export interface McpHealthStatus {
+	/** Stable across restarts; composite of scope + transport + server name. */
+	id: string;
+	name: string;
+	transport: "stdio" | "http";
+	scope: "deck" | "gholam";
+	state: "healthy" | "degraded" | "unreachable" | "unknown" | "disabled";
+	lastSuccessAt: string | null;
+	lastErrorAt: string | null;
+	lastError?: string;
+	lastLatencyMs: number | null;
+	/** From the last successful tools/list response. */
+	toolCount?: number;
+	probedAt: string;
+}
+
+/** Response body for `GET /api/discovery/search`. */
+export interface DiscoverySearchResponse {
+	hits: DiscoveryHit[];
+	providersUsed: string[];
+	cacheHits: number;
+	tookMs: number;
+}
+
+/** Response body for `GET /api/mcp/health`. */
+export interface McpHealthResponse {
+	status: McpHealthStatus[];
+	probedAt: string;
+}
+
+/** Response body for `POST /api/marketplace/install/dry-run`. */
+export interface DryRunInstallResponse {
+	ok: boolean;
+	manifest: {
+		name: string;
+		version?: string;
+		entrypoints: {
+			commands?: string[];
+			agents?: string[];
+			hooks?: string[];
+			mcpServers?: string[];
+			lspServers?: string[];
+		};
+	};
+	cloneUrl: string;
+	ref?: string;
+	sha?: string;
+	wouldCacheTo: string;
+}
+
+/** Body for `POST /api/marketplace/install/dry-run`. Same shape as install. */
+export interface DryRunInstallRequest {
+	name: string;
+	marketplace: string;
+	scope?: "user" | "project";
+}
+
+/** Response body for `POST /api/marketplace/install` after §1 error translation. */
+export interface InstallPluginErrorResponse {
+	error:
+		| "marketplace_not_found"
+		| "plugin_not_found"
+		| "already_installed"
+		| "git_clone_failed"
+		| "ssl_ca_failed"
+		| "unsupported_source"
+		| "install_failed";
+	message: string;
+	hint?: string;
+	marketplace?: string;
+	name?: string;
+	url?: string;
+	cause?: string;
+	at?: "resolve_source" | "version_resolve" | "cache_plugin" | "registry_write";
+}
 export interface ListAgentBackupsResponse {
 	backups: AgentConfigBackup[];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Persistent Gholam chat (§1 of docs/GENERATIVE.md)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Cost telemetry accumulating over a single chat. `costMicrocents` is USD
+ *  micro-cents — 1 cent = 1_000_000 micro-cents, $1 = 100_000_000. Matches
+ *  the unit used by the routines runner's `total_llm_cost_micros` column. */
+export interface ChatUsage {
+	tokensIn: number;
+	tokensOut: number;
+	costMicrocents: number;
+}
+
+/** Lifecycle states for a `GholamChat`. `running`/`paused`/`completed`/
+ *  `failed` mirror the SDK session lifecycle; `awaiting_user` and
+ *  `awaiting_tool` are deck-only values emitted when the runtime loop
+ *  hands control back to the surface. */
+export type GholamChatState =
+	| "running"
+	| "paused"
+	| "awaiting_user"
+	| "awaiting_tool"
+	| "completed"
+	| "failed";
+
+/** Origin of the chat. `user` = new chat view; `auto` = spawned by a
+ *  background pump; `priority` = mirror of a GholamPriority entry. */
+export type GholamChatKind = "user" | "auto" | "priority";
+
+/** One persisted chat row. `usage` is cumulative across every assistant
+ *  message in the chat (cheap to read on render, single-row aggregate). */
+export interface GholamChat {
+	id: string;
+	title: string;
+	kind: GholamChatKind;
+	cwd: string;
+	model?: string;
+	state: GholamChatState;
+	summary?: string;
+	priorityId?: string;
+	usage: ChatUsage;
+	createdAt: string;
+	updatedAt: string;
+	deletedAt?: string;
+}
+
+/** Role of a single append-only chat message. `tool_call` carries the
+ *  requested sidecar invocation as JSON; `tool_result` carries the reply. */
+export type GholamChatMessageRole =
+	| "user"
+	| "assistant"
+	| "tool_call"
+	| "tool_result"
+	| "system"
+	| "note";
+
+/** Wire shape of one chat message. `meta` is persisted as JSON
+ *  (`gholam_chat_messages.meta_json`); the runtime loop stashes LLM
+ *  usage, sidecar ids, and errors here so a replay is self-contained. */
+export interface GholamChatMessageWire {
+	id: string;
+	chatId: string;
+	seq: number;
+	role: GholamChatMessageRole;
+	content: string;
+	meta?: {
+		model?: string;
+		tool?: string;
+		toolCallId?: string;
+		requiredPermissions?: string[];
+		usage?: ChatUsage;
+		error?: string;
+		[key: string]: unknown;
+	};
+	createdAt: string;
+}
+
+/** Server-internal projection of `GholamChatMessageWire`. Identical
+ *  shape today; aliased so the storage/service layer has its own name
+ *  without inflating the wire-side interface. New optional metadata
+ *  fields added here are also accepted on the wire (TS structural
+ *  compatibility is one-way here). */
+export type GholamChatMessage = GholamChatMessageWire;
+
+export interface ListGholamChatsResponse {
+	chats: GholamChat[];
+}
+
+export interface ListGholamChatMessagesResponse {
+	messages: GholamChatMessage[];
+}
+
+export interface CreateGholamChatRequest {
+	cwd: string;
+	prompt: string;
+	model?: string;
+	title?: string;
+	kind?: GholamChatKind;
+	priorityId?: string;
+}
+
+export interface CreateGholamChatMessageRequest {
+	content: string;
+}
+
+export interface RestartGholamChatRequest {
+	prompt: string;
 }

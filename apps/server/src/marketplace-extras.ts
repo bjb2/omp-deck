@@ -150,12 +150,12 @@ export const marketplaceExtras = {
 		// Honor explicit user choice: if they forced `GIT_SSL_NO_VERIFY=true`,
 		// skip the CA injection and document why.
 		if (process.env.GIT_SSL_NO_VERIFY === "true") {
-			sslFixApplied = true;
+		sslFixApplied = true;
 			return { applied: true, note: "user opted out via GIT_SSL_NO_VERIFY" };
 		}
 		const bundle = this.resolveCABundle();
 		if (!bundle) {
-			sslFixApplied = true;
+		sslFixApplied = true;
 			return { applied: true, note: "no system CA bundle located" };
 		}
 		// Inject both the conventional `git` env var and `NODE_EXTRA_CA_CERTS`
@@ -164,9 +164,41 @@ export const marketplaceExtras = {
 		if (!process.env.NODE_EXTRA_CA_CERTS) {
 			process.env.NODE_EXTRA_CA_CERTS = bundle;
 		}
-		sslFixApplied = true;
+			sslFixApplied = true;
 		sslFixBundle = bundle;
 		log.info(`SSL CA bundle wired: ${bundle}`);
+		return { applied: true, bundle };
+	},
+
+/**
+ * Per-call idempotent re-check of the SSL CA wiring. The boot-time
+ * `applySslFix()` runs once in `main()`; this helper is the cheap guard
+ * called from `MarketplaceService.install` immediately before any
+ * `Bun.spawn` that may clone a git source. Re-applies the env vars when
+ * the resolved bundle changed since boot (e.g. the user just edited
+ * `OMP_DECK_*` env), or when they were cleared by a child process. The
+ * call is a no-op when the boot fix is still current.
+ */
+ensureSslFix(): { applied: boolean; bundle?: string; note?: string } {
+	if (sslFixApplied && process.env.GIT_SSL_CAINFO === sslFixBundle) {
+		return { applied: true, bundle: sslFixBundle };
+	}
+		if (process.env.GIT_SSL_NO_VERIFY === "true") {
+		sslFixApplied = true;
+			return { applied: true, note: "user opted out via GIT_SSL_NO_VERIFY" };
+	}
+		const bundle = this.resolveCABundle();
+		if (!bundle) {
+		sslFixApplied = true;
+			return { applied: true, note: "no system CA bundle located" };
+	}
+		process.env.GIT_SSL_CAINFO = bundle;
+		if (!process.env.NODE_EXTRA_CA_CERTS) {
+			process.env.NODE_EXTRA_CA_CERTS = bundle;
+	}
+		sslFixBundle = bundle;
+			sslFixApplied = true;
+	log.info(`SSL CA bundle re-wired: ${bundle}`);
 		return { applied: true, bundle };
 	},
 };

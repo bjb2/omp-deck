@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import type {
 	AddMarketplaceRequest,
+	DryRunInstallRequest,
+	DryRunInstallResponse,
+	InstallPluginErrorResponse,
 	InstallPluginRequest,
 	InstallPluginResponse,
 	ListMarketplaceResponse,
@@ -13,6 +16,114 @@ import type { MarketplaceService } from "./marketplace-service.ts";
 
 const log = logger("routes:marketplace");
 
+/**
+ * Walk the error chain (current error + each `cause`) and pick the most
+ * specific user-facing code. `MarketplaceService` is the only thrower in
+ * this surface; raw `git clone` / `Bun.spawn` failures bubble through
+ * `err.message` (the SDK wraps them) so message heuristics cover the
+ * child-process layer too.
+ */
+function translateInstallError(err: unknown, ctx: { name: string; marketplace: string }): { status: number; body: InstallPluginErrorResponse } {
+	const messages: string[] = [];
+	for (let e: unknown = err; e; e = (e as { cause?: unknown })?.cause) {
+		if (e instanceof Error && e.message) messages.push(e.message);
+		else if (typeof e === "string") messages.push(e);
+		else break;
+	}
+	const haystack = messages.join("\n");
+	const message = messages[0] ?? "install failed";
+	if (/Marketplace ".*" not found/.test(haystack)) {
+		return {
+			status: 400,
+			body: {
+				error: "marketplace_not_found",
+				message: `Marketplace "${ctx.marketplace}" not found.`,
+				marketplace: ctx.marketplace,
+				hint: "Try refreshing the catalog (Refresh button).",
+			},
+		};
+	}
+	if (/Plugin ".*" not found in marketplace/.test(haystack)) {
+		return {
+			status: 400,
+			body: {
+				error: "plugin_not_found",
+				message: `Plugin "${ctx.name}" not found in marketplace "${ctx.marketplace}".`,
+				name: ctx.name,
+				marketplace: ctx.marketplace,
+				hint: "The catalog may be stale. Refresh and try again.",
+			},
+		};
+	}
+	if (/is already installed/.test(haystack)) {
+		return {
+			status: 409,
+			body: {
+				error: "install_failed",
+				message,
+				name: ctx.name,
+				marketplace: ctx.marketplace,
+				hint: "The plugin is already installed. Use force=true to reinstall.",
+			},
+		};
+	}
+	if (/relative source path but marketplace.*added via URL/.test(haystack)) {
+		return {
+			status: 422,
+			body: {
+				error: "install_failed",
+				message,
+				name: ctx.name,
+				marketplace: ctx.marketplace,
+				hint: "The marketplace was added via URL but the plugin uses a relative path. Re-add the marketplace as a git repo.",
+			},
+		};
+	}
+	if (/unsupported source type|npm plugin sources/.test(haystack)) {
+		return {
+			status: 422,
+			body: {
+				error: "unsupported_source",
+				message,
+				name: ctx.name,
+				marketplace: ctx.marketplace,
+				hint: "npm-typed plugin sources are not yet supported by the SDK. Use a git-based source instead.",
+			},
+		};
+	}
+	if (/SSL CA cert|Problem with the SSL/i.test(haystack)) {
+		return {
+			status: 422,
+			body: {
+				error: "ssl_ca_failed",
+				message,
+				hint: "Set GIT_SSL_CAINFO or GIT_SSL_NO_VERIFY, then restart the server.",
+			},
+		};
+	}
+	if (/fatal:|could not resolve|unable to access|Cloning into/.test(haystack)) {
+		const urlMatch = /https?:\/\/\S+/.exec(haystack);
+		return {
+			status: 422,
+			body: {
+				error: "git_clone_failed",
+				message,
+				...(urlMatch ? { url: urlMatch[0] } : {}),
+				hint: "Check your network access to github.com and the marketplace repo.",
+			},
+		};
+	}
+	return {
+		status: 500,
+		body: {
+			error: "install_failed",
+			message,
+			name: ctx.name,
+			marketplace: ctx.marketplace,
+			hint: "Run Test Install to see the full failure.",
+		},
+	};
+}
 export function buildMarketplaceRouter(service: MarketplaceService): Hono {
 	const app = new Hono();
 
@@ -47,7 +158,32 @@ export function buildMarketplaceRouter(service: MarketplaceService): Hono {
 			return c.json(resp);
 		} catch (err) {
 			log.error(`install failed`, err);
-			return c.json({ error: String((err as Error).message ?? err) }, 500);
+			const translated = translateInstallError(err, { name: body.name, marketplace: body.marketplace });
+			return c.json(translated.body, translated.status as 400 | 409 | 422 | 500);
+		}
+	});
+
+	app.post("/marketplace/install/dry-run", async (c) => {
+		let body: DryRunInstallRequest;
+		try {
+			body = (await c.req.json()) as DryRunInstallRequest;
+		} catch {
+			return c.json({ error: "invalid json" }, 400);
+		}
+		if (!body.name || !body.marketplace) {
+			return c.json({ error: "name and marketplace are required" }, 400);
+		}
+		try {
+			const resp: DryRunInstallResponse = await service.dryRun({
+				name: body.name,
+				marketplace: body.marketplace,
+				...(body.scope ? { scope: body.scope } : {}),
+			});
+			return c.json(resp);
+		} catch (err) {
+			log.warn(`install dry-run failed`, err);
+			const translated = translateInstallError(err, { name: body.name, marketplace: body.marketplace });
+			return c.json(translated.body, translated.status as 400 | 409 | 422 | 500);
 		}
 	});
 

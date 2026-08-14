@@ -5,12 +5,29 @@ import type { AgentBridge } from "./bridge/types.ts";
 import { broadcastBus } from "./broadcast-bus.ts";
 import { logger } from "./log.ts";
 import { getBuildInfo, getUptimeSecs } from "./build-info.ts";
+import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
 const log = logger("ws");
 
 /** Per-connection state. */
 export interface ConnectionData {
 	connectionId: string;
 	subscriptions: Map<string, () => void>;
+}
+
+/** Default minimum gap between consecutive frames of the same type on the
+ *  WS bus. 1s caps per-type round-trip cost without flattening realtime
+ *  (session_event, heartbeats, etc. are not throttled by this map).
+ *  `mcp_health` is intentionally floor'd at 30s — the probe loop runs
+ *  on its own 30s cadence, so a second-per-frame cap would be
+ *  meaningless, and dropping a probe result is fine because the next
+ *  one is ≤30s away. */
+const DEFAULT_THROTTLE_MS = 1_000;
+const THROTTLE_OVERRIDES: Record<string, number> = {
+	mcp_health: 30_000,
+};
+
+function throttleMinMs(type: string): number {
+	return THROTTLE_OVERRIDES[type] ?? DEFAULT_THROTTLE_MS;
 }
 
 /**
@@ -23,6 +40,9 @@ export const HEARTBEAT_INTERVAL_MS = 5000;
 export class WsHub {
 	private readonly connections = new Set<ServerWebSocket<ConnectionData>>();
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+	/** Last wall-clock time (ms) each throttled frame type was actually sent
+	 *  over the bus. Dropped frames do not bump this. */
+	private readonly lastSentByType = new Map<string, number>();
 
 	constructor(private bridge: AgentBridge) {
 		broadcastBus.subscribe((frame) => this.broadcast(frame));
@@ -77,6 +97,19 @@ export class WsHub {
 		} catch {
 			send(ws, { type: "error", error: "invalid json" });
 			return;
+		}
+
+		// Gholam permission gate: only `gholam_command` frames are gated.
+		// Missing/empty requiredPermissions is a no-op (no gating needed).
+		// On failure, send an error frame back and drop the frame.
+		if (frame.type === "gholam_command") {
+			const required = frame.requiredPermissions ?? [];
+			const result = await checkGholamFramePermissions(required);
+			if (!result.ok) {
+				log.warn("gholam frame rejected for missing permissions", result.missing);
+				send(ws, { type: "error", error: `gholam:missing_permissions:${result.missing.join(",")}` });
+				return;
+			}
 		}
 
 		switch (frame.type) {
@@ -145,7 +178,21 @@ export class WsHub {
 		subs.clear();
 	}
 
-	private broadcast(frame: ServerFrame): void {
+	/** Public so the bundle watcher (and any other emitter) can fan the
+	 *  frame out to every connected client without going through the
+	 *  broadcastBus (which is the channel the bus-driven frames use). */
+	public broadcast(frame: ServerFrame): void {
+		// Per-type rate limit on the bus. The probe/refresh cadences are
+		// independent; this only caps how many of those frames can squeeze
+		// through the bus per second. session_event etc. are unthrottled
+		// because their `type` is not in the override map AND their min
+		// interval is the default 1s — but a fast burst of distinct frame
+		// types will all pass since the key is the type string.
+		const minMs = throttleMinMs(frame.type);
+		const now = Date.now();
+		const last = this.lastSentByType.get(frame.type);
+		if (last !== undefined && now - last < minMs) return;
+		this.lastSentByType.set(frame.type, now);
 		const payload = JSON.stringify(frame);
 		for (const ws of this.connections) {
 			try {
