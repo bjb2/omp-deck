@@ -1,0 +1,131 @@
+# omp-deck — OpenShip custom-app manifest.
+#
+# OpenShip consumes this shape via `post_apps_custom` (per the OpenShip
+# skill at agent-defaults/managed-skills/openship/SKILL.md §"Custom
+# Apps"). The fields below match the AppTemplate schema; the deploy
+# shell (deploy/openship-deploy.sh) POSTs this file's contents and then
+# calls `post_apps` to install it.
+#
+# Build + start commands assume OpenShip builds with the REPO ROOT as
+# build context (Vite needs the whole workspace). Adjust `buildCommand`
+# if you fork into a sub-project with its own Dockerfile.
+
+id: omp-deck
+kind: template
+name: omp-deck
+description: >
+  Local cockpit for the OMP coding agent — multi-session chat, kanban,
+  routines, knowledge base, marketplace for skills / MCP / prompts,
+  GitHub-native clone/push/PR, and OpenShip REST bridge for deploy
+  control from inside the deck. Single Bun server image; web bundle
+  built at image time and served as static assets.
+category: ai
+custom: true
+
+services:
+  - name: omp-deck
+    image: omp-deck:latest
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - container: 8787
+        protocol: tcp
+        mode: port
+    healthcheck:
+      test:
+        - wget
+        - -q
+        - -O-
+        - http://127.0.0.1:8787/api/health
+      intervalSeconds: 30
+      timeoutSeconds: 5
+      retries: 3
+      startPeriodSeconds: 10
+    env:
+      - key: OMP_DECK_HOST
+        value: 0.0.0.0
+      - key: OMP_DECK_PORT
+        value: "8787"
+      - key: OMP_DECK_WEB_DIST
+        value: /app/apps/web/dist
+      - key: OMP_AGENT_DIR
+        value: /data/omp-agent
+      - key: OMP_DECK_DEFAULT_CWD
+        value: /workspace
+      - key: NODE_ENV
+        value: production
+      # The bearer token that lets the deck talk back to OpenShip via
+      # the MCP bridge. Marked as a secret — OpenShip will encrypt at
+      # rest and mask in any log/audit surface.
+      - key: MCP_OPENSHIP_TOKEN
+        isSecret: true
+      # Optional provider keys for the in-deck agent.
+      - key: ANTHROPIC_API_KEY
+        isSecret: true
+        optional: true
+      - key: OPENAI_API_KEY
+        isSecret: true
+        optional: true
+      - key: GEMINI_API_KEY
+        isSecret: true
+        optional: true
+      # Optional GitHub PAT for clone/push/PR from the GitHubPanel.
+      - key: GITHUB_TOKEN
+        isSecret: true
+        optional: true
+    volumes:
+      - name: agent
+        mountPath: /data/omp-agent
+      - name: workspace
+        mountPath: /workspace
+
+endpoints:
+  - name: web
+    service: omp-deck
+    port: 8787
+    mode: port
+
+volumes:
+  - name: agent
+    type: persistent
+  - name: workspace
+    type: host
+    # Operator maps this to a host path via the project env or the
+    # `routes` payload at install time. Default: ./workspace on the
+    # OpenShip server.
+    hostPath: ${OMP_DECK_WORKSPACE:-/var/lib/openship/projects/omp-deck/workspace}
+
+configFields:
+  - key: MCP_OPENSHIP_TOKEN
+    label: OpenShip MCP bearer token
+    description: >
+      Lets the deck list OpenShip projects, trigger deploys, and pull
+      logs from inside /integrations.
+    required: true
+    secret: true
+  - key: ANTHROPIC_API_KEY
+    label: Anthropic API key
+    secret: true
+    required: false
+  - key: OPENAI_API_KEY
+    label: OpenAI API key
+    secret: true
+    required: false
+  - key: GEMINI_API_KEY
+    label: Gemini API key
+    secret: true
+    required: false
+  - key: GITHUB_TOKEN
+    label: GitHub PAT
+    description: Enables clone / push / PR inside the GitHub panel.
+    secret: true
+    required: false
+  - key: OMP_DECK_WORKSPACE
+    label: Workspace host path
+    description: >
+      Host directory mounted at /workspace inside the container. The
+      agent shells into here.
+    secret: false
+    required: false
+    default: /var/lib/openship/projects/omp-deck/workspace

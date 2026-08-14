@@ -1,0 +1,64 @@
+# omp-deck server — production compose. Loopback-bound by default. Front
+# it with Tailscale or an SSH tunnel on the host. Never publish 0.0.0.0
+# unless you've put a real proxy with auth in front (this image has no
+# auth of its own).
+#
+# Pair with deploy/.env.example for required secrets. Build from the repo
+# root so Vite sees the whole workspace:
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env \
+#     build --build-arg BUILDKIT_SANDBOX_HOSTNAME=nonroot
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+services:
+  omp-deck:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: omp-deck:latest
+    restart: unless-stopped
+    # Loopback-only on the host. To expose over Tailscale, either:
+    #   - Run `tailscale serve --bg --https=443 http://127.0.0.1:8787`
+    #   - Or bind the Tailscale interface IP instead of 127.0.0.1.
+    ports:
+      - "127.0.0.1:${OMP_DECK_PORT:-8787}:8787"
+    environment:
+      # The container listens on all interfaces inside its network namespace.
+      # Host-side loopback bind is what isolates it from the world.
+      OMP_DECK_HOST: "0.0.0.0"
+      OMP_DECK_PORT: "8787"
+      OMP_DECK_WEB_DIST: "/app/apps/web/dist"
+      # Default workspace cwd inside the container. Mount your actual workspace
+      # under /workspace and set this to /workspace to give the agent access.
+      OMP_DECK_DEFAULT_CWD: "${OMP_DECK_DEFAULT_CWD:-/workspace}"
+      # Persisted omp session JSONLs + auth db live here.
+      OMP_AGENT_DIR: "/data/omp-agent"
+      NODE_ENV: "production"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # Pass through provider keys (or pre-populate ~/.omp/agent/agent.db via the
+      # `omp /login` flow before baking the image).
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      # The OpenShip MCP bearer token. Without this the deck's own
+      # /api/openship/* routes return 503 with a "not configured" hint;
+      # with it, the deck can list projects, trigger deploys, and pull
+      # logs directly from the OpenShip sidecar.
+      MCP_OPENSHIP_TOKEN: "${MCP_OPENSHIP_TOKEN:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+    volumes:
+      # Persist omp session state across container restarts.
+      - omp-deck-agent:/data/omp-agent
+      # Mount the workspace the agent should operate in. Edit this for your box.
+      - ${OMP_DECK_WORKSPACE:-./workspace}:/workspace
+    # Send SIGTERM to the Bun process directly; it cleans up bridge + bun.serve.
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  omp-deck-agent:
