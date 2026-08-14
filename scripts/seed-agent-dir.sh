@@ -76,6 +76,35 @@ else
 	done
 fi
 
+# Is $1 a parseable config? Only files we render are checked, and only for
+# the two syntaxes we emit. A file we cannot validate counts as valid — the
+# goal is to catch corruption we caused, never to police the user's edits.
+#
+# This exists because "keep whatever is in the volume" has a failure mode:
+# if a *broken* config ever lands there (a duplicate YAML key shipped in a
+# template, a truncated write during a crash), it is preserved forever and
+# the server retries parsing it on a loop. Re-rendering only the files that
+# actually fail to parse heals that without touching anything the user
+# customised.
+config_is_valid() {
+	_file="$1"
+	case "$_file" in
+	*.json)
+		# bun is always present in this image; it is the server runtime.
+		bun -e 'JSON.parse(await Bun.file(process.argv[1]).text())' "$_file" >/dev/null 2>&1
+		;;
+	*.yml | *.yaml)
+		bun -e '
+			const y = await import("yaml");
+			y.default.parse(await Bun.file(process.argv[1]).text());
+		' "$_file" >/dev/null 2>&1
+		;;
+	*)
+		return 0
+		;;
+	esac
+}
+
 # ── Render *.tmpl, substituting ${VAR} from the environment ────────────────
 #
 # Unset variables render as empty. That is deliberate: a half-configured MCP
@@ -86,8 +115,14 @@ for tmpl in "$DEFAULTS_DIR"/*.tmpl; do
 	base=$(basename "$tmpl" .tmpl)
 	target="$AGENT_DIR/$base"
 	if [ -e "$target" ] && [ "$FORCE" != "1" ]; then
-		log "keeping existing $base"
-		continue
+		if config_is_valid "$target"; then
+			log "keeping existing $base"
+			continue
+		fi
+		# Corrupt. Preserve the operator's copy for diagnosis, then re-render
+		# so the server actually boots with a working config.
+		log "existing $base is not parseable — backing up and re-rendering"
+		cp "$target" "$target.corrupt.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
 	fi
 	if command -v envsubst >/dev/null 2>&1; then
 		envsubst < "$tmpl" > "$target"
