@@ -37,7 +37,12 @@ providers:
     discovery:
       type: openai-models-list
 
-  inception:
+  # Legacy Inception route via the omnirouter proxy. Kept reachable under a
+  # distinct key — a second `inception:` mapping made the whole models.yml
+  # unparseable (`YAMLParseError: Map keys must be unique`), which put
+  # `custom-providers` into a once-a-second reload-and-fail loop in
+  # production. The official endpoint above owns the `inception` name.
+  inception-omnirouter:
     baseUrl: https://omnirouter.v244.net/api/v1
     apiKey: ${OMP_PROVIDER_INCEPTION_API_KEY}
     api: openai-completions
