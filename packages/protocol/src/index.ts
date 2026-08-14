@@ -1130,9 +1130,13 @@ type _ServerFrameBase =
 	 * MCP server probe snapshot. Pushed by the McpHealthProbe loop after
 	 * each successful (or failed) tools/list round. The WsHub throttle
 	 * caps at 1/sec for this type so a 30s probe cadence across many
-	 * servers can't flood the bus.
+	 * servers can't flood the bus. `status` is the full snapshot — not a
+	 * single server — because the UI derives the worst-current state across
+	 * all servers for the chrome badge and the per-row studio list; per-
+	 * server frames would either have to be batched at the bus or dropped
+	 * silently under throttle.
 	 */
-	| { type: "mcp_health"; status: McpHealthStatus }
+	| { type: "mcp_health"; status: McpHealthStatus[] }
 	/**
 	 * Persistent Gholam chat — a new message landed in the append-only log.
 	 * Broadcast on every assistant / user / tool row insert so the chat-list
