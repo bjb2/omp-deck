@@ -56,6 +56,14 @@ function openGholamWs(): void {
 	const token = state.gholamToken;
 	if (!token) return;
 	gholamWsState = "connecting";
+	// One-time migration warning: GHOLAM_WS_URL was the legacy key. New
+	// code reads OMP_DECK_GHOLAM_EXTERNAL_URL instead. If we see the
+	// legacy key but not the new one, the operator almost certainly
+	// still has it set from a previous deploy — warn loudly so the
+	// misconfig is visible in the logs even when the UI doesn't show it.
+	if (process.env.GHOLAM_WS_URL && !process.env.OMP_DECK_GHOLAM_EXTERNAL_URL) {
+		log.warn(`gholam: GHOLAM_WS_URL=${process.env.GHOLAM_WS_URL} is set but IGNORED — rename to OMP_DECK_GHOLAM_EXTERNAL_URL, or unset to use the in-process sidecar on ws://127.0.0.1:47900/ws`);
+	}
 	// External sidecar mode is opt-in under the explicit OMP_DECK_GHOLAM_EXTERNAL_URL
 	// key. The legacy GHOLAM_WS_URL was misconfigured several times in production
 	// (pointing at a broken-cert external host that never came up), leaving the
