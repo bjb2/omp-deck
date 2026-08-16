@@ -301,10 +301,10 @@ export function buildRouter(
 	// Persistent Gholam chat history — §1 of docs/GENERATIVE.md. Mounted
 	// flat under "/gholam/chats" so the legacy "/api/gholam/*" control
 	// surface in buildHarnessRouter stays conflict-free.
-	app.route("/gholam/chats", buildGholamChatsRouter());
+	app.route("/", buildGholamChatsRouter());
 	app.route("/", buildRoutesOverview({ config }));
 	// Typed LLM registry — §2. GET /api/llm/providers + POST /api/llm/test.
-	app.route("/llm", buildLLMRouter());
+	app.route("/", buildLLMRouter());
 	// §3 + §4 of docs/GENERATIVE.md — generative UI stream + pre-update
 	// preview. Mounted below the existing routers so their more specific
 	// paths (`/api/genui/*`, `/api/preview/*`) take precedence; the routers

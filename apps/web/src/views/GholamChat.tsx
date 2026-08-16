@@ -12,6 +12,8 @@ import { ArrowLeft, Pause, RefreshCcw, Trash2 } from "lucide-react";
 import type { GholamChat, GholamChatMessageWire } from "@omp-deck/protocol";
 
 import { Layout } from "@/components/Layout";
+import { ChatHistorySidebar } from "@/components/gholam/ChatHistorySidebar";
+import { ModelPicker } from "@/components/gholam/ModelPicker";
 import { gholamChatApi } from "@/lib/gholam-chat-api";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -131,11 +133,34 @@ export function GholamChatView() {
 		}
 	}
 
+	async function changeModel(nextModel: string): Promise<void> {
+		if (!chatId) return;
+		const trimmed = nextModel.trim();
+		if (!trimmed) return;
+		const previous = chat;
+		// Optimistic local + store update so the picker reflects the change immediately.
+		setChat((prev) => (prev ? { ...prev, model: trimmed } : prev));
+		if (previous) {
+			useStore.getState().upsertGholamChat({ ...previous, model: trimmed });
+		}
+		try {
+			const { chat: updated } = await gholamChatApi.patchModel(chatId, trimmed);
+			setChat(updated);
+			useStore.getState().upsertGholamChat(updated);
+		} catch (err) {
+			setError(String(err));
+			setChat(previous ?? null);
+			if (previous) {
+				useStore.getState().upsertGholamChat(previous);
+			}
+		}
+	}
+
 	if (!chatId) return null;
 	if (!chat) {
 		return (
 			<Layout
-				sidebar={null}
+				sidebar={<ChatHistorySidebar />}
 				inspector={null}
 				main={
 					<div className="flex h-full items-center justify-center p-6">
@@ -163,7 +188,7 @@ export function GholamChatView() {
 
 	return (
 		<Layout
-			sidebar={null}
+			sidebar={<ChatHistorySidebar activeChatId={chat.id} />}
 			inspector={null}
 			main={
 				<div className="flex h-full flex-col gap-3 overflow-hidden p-6">
@@ -216,6 +241,26 @@ export function GholamChatView() {
 					<div className="rounded border border-line bg-paper-2 px-3 py-2 font-mono text-2xs text-ink-3">
 						Cost so far: {formatCost(chat.usage.costMicrocents)} · tokens in/out:{" "}
 						{chat.usage.tokensIn}/{chat.usage.tokensOut}
+					</div>
+
+					<div className="flex items-center gap-3">
+						<ModelPicker
+							value={chat.model ?? ""}
+							onChange={(next) => void changeModel(next)}
+						/>
+						<span
+							className={cn(
+								"rounded px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wider",
+								chat.state === "running"
+									? "bg-emerald-100 text-emerald-900"
+									: "bg-paper-2 text-ink-3",
+							)}
+						>
+							{chat.state === "running" ? "online" : "offline"}
+						</span>
+						<span className="font-mono text-2xs text-ink-3">
+							model: {chat.model ?? "default"}
+						</span>
 					</div>
 
 					<div className="flex flex-1 flex-col gap-3 overflow-y-auto">

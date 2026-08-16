@@ -37,6 +37,7 @@ import {
 	listMessages,
 	restartChat,
 	softDeleteChat,
+	updateChatModel,
 	updateState,
 } from "./gholam-chats.ts";
 import { logger } from "./log.ts";
@@ -45,6 +46,7 @@ const log = logger("routes:gholam-chats");
 
 function principalFromReq(req: Request): { allowed: boolean; internal: boolean } {
 	const cfg = getAuthConfig();
+	if (!cfg.enabled) return { allowed: true, internal: false };
 	const principal = resolvePrincipal(req, cfg);
 	if (!principal) return { allowed: false, internal: false };
 	if (principal.kind === "internal") return { allowed: true, internal: true };
@@ -183,6 +185,23 @@ export function buildGholamChatsRouter(): Hono {
 			log.error("append message failed", err);
 			return c.json({ error: String((err as Error).message ?? err) }, 500);
 		}
+	});
+
+	// PATCH MODEL ────────────────────────────────────────────────────────
+	app.patch("/gholam/chats/:id", async (c) => {
+		const access = principalFromReq(c.req.raw);
+		if (!access.allowed) return c.json({ error: "unauthorized" }, 401);
+		const id = c.req.param("id");
+		const chat = requireChat(id);
+		if (chat instanceof Response) return chat;
+		let body: { model?: unknown };
+		try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+		const model = typeof body.model === "string" ? body.model.trim() : "";
+		if (!model) return c.json({ error: "model required" }, 400);
+		const updated = updateChatModel(id, model);
+		if (!updated) return c.json({ error: "chat not found" }, 404);
+		broadcastBus.broadcast({ type: "gholam_chat_state", chatId: id, state: updated.state, usage: updated.usage });
+		return c.json({ chat: updated });
 	});
 
 	// CANCEL ──────────────────────────────────────────────────────────────

@@ -18,19 +18,33 @@ apps/*/dist
 apps/web/dist-server
 .next
 
+# Drizzle Kit generated output (migrations + meta snapshots).
+# Hand-authored SQL lives in apps/server/src/db/migrations and stays tracked;
+# these are the folders drizzle-kit writes when it is run from a package root.
+drizzle/
+apps/*/drizzle/
+
 # Editor
 .vscode
 .idea
 *.swp
-# Runtime + deck-managed data
+# Runtime + deck-managed data. The repo-root /data/ dir is NOT source — it
+# appears when a probe run points OMP_DECK_DATA_DIR at the repo root and drops
+# a stray deck.db there; data-shell-probe/ is the same kind of session scratch
+# (it holds a persisted deck api-token and must never be committed).
 apps/server/data
 apps/server/data/*.db
 apps/server/data/*.db-shm
 apps/server/data/*.db-wal
 apps/server/dist-server
 apps/bridges/*/dist
+/data/
+/data-shell-probe/
 
 # Smoke / spawn helpers and captured logs
+__probe__.txt
+raw-full.txt
+/qr-*.svg
 .logs
 .deck-data
 orgd-stdout.log
@@ -40,6 +54,7 @@ server.err.log
 server.out.log
 
 # Local config the deck or bridges may write
+WATCHDOG.yml
 .env.*
 !.env.example
 

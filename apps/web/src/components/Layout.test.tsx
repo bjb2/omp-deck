@@ -52,11 +52,12 @@ describe("Layout a11y", () => {
 		expect(inertOf(getByLabelText("Sessions"))).toBe(true);
 		expect(inertOf(getByLabelText("Inspector"))).toBe(true);
 
-		useStore.getState().setInspectorOpen(true);
-		// The DOM-property `inert` is set in a useEffect — wrap the state
-		// flip in act() so React commits and the effect runs before the
+		act(() => {
+			useStore.getState().setInspectorOpen(true);
+		});
+		// The DOM-property `inert` is set in a useEffect — wrapping the state
+		// flip in act() lets React commit and run the effect before the
 		// assertion reads the DOM node.
-		act(() => {});
 		expect(inertOf(getByLabelText("Inspector"))).toBe(false);
 		expect(inertOf(getByLabelText("Sessions"))).toBe(true);
 	});
@@ -66,8 +67,9 @@ describe("Layout a11y", () => {
 		const { getByLabelText } = renderLayout();
 		expect(inertOf(getByLabelText("Inspector"))).toBe(false);
 
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-		act(() => {});
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+		});
 
 		expect(useStore.getState().inspectorOpen).toBe(false);
 		expect(inertOf(getByLabelText("Inspector"))).toBe(true);

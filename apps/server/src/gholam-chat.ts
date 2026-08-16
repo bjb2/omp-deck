@@ -11,26 +11,30 @@
  * Cost telemetry is aggregated into `gholam_chats.usage_json` and broadcast
  * via `gholam_chat_usage` so the inspector pane updates without polling.
  *
- * Tool-call dispatch uses the same `gholam.ts` sidecar frame the deck
- * `gholam.edit()` path uses. The runtime loop listens for the matching
- * `mcp_reply` and resolves the pending promise; a 30s deadline bounds the
- * open socket so a stuck sidecar can't keep a chat "running" forever.
+ * Tool-call dispatch goes straight to the in-process deck MCP runtime
+ * (`./gholam-mcp-runtime.ts`) — same process, no socket hop. The deck
+ * `gholam.edit()` path keeps using the `gholam.ts` sidecar frame; only the
+ * chat runtime loop runs tools inline.
  */
 import type { GholamChatMessage } from "@omp-deck/protocol";
 
-import { onGholamFrame, sendGholamFrame } from "./gholam.ts";
 import { broadcastBus } from "./broadcast-bus.ts";
 import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
 import { appendMessage, getChat, listMessages, restartChat, updateState } from "./gholam-chats.ts";
 import { updateMessageMeta } from "./gholam-chats.ts";
 import { gholamDeckLLM } from "./llm-registry.ts";
-import type { LlmChunk } from "./llm-registry.ts";
+import type { LlmChunk, LlmToolSpec } from "./llm-registry.ts";
+import { callGholamMcpTool, loadGholamMcpTools } from "./gholam-mcp-runtime.ts";
 import { logger } from "./log.ts";
 
 const log = logger("gholam-chat");
 
-const SIDECAR_TIMEOUT_MS = 30_000;
 const MAX_LOOP_ITERATIONS = 25;
+/** Deck-side MCP tool specs, cached briefly so a long chat doesn't re-hit
+ *  the mcp.json loader on every iteration. 60s covers a normal chat; longer
+ *  tool installs pick up on the next chat. */
+const MCP_TOOLS_TTL_MS = 60_000;
+let mcpToolsCache: { specs: LlmToolSpec[]; expiresAt: number } | undefined;
 
 type LlmMessageInput = Parameters<typeof gholamDeckLLM.complete>[0]["messages"];
 
@@ -47,16 +51,20 @@ function messagesToLlm(rows: GholamChatMessage[]): LlmMessageInput {
 			}
 			// SDK `toolCall.id` is the canonical pairing key. Mirror it on the
 			// `toolCallId` field (added in v1) so downstream `llmMessagesToSdk`
-			// doesn't have to re-derive it. `name` stays populated as the
-			// fall-back for legacy rows + older callers.
+			// doesn't have to re-derive it.
+			// `meta.tool` carries the SDK-returned `serverName::toolName`
+			// pairing. Forward it on both `name` and `toolCall.tool` so the
+			// downstream SDK re-parses for the actual server split.
 			const toolCallId = meta.toolCallId ?? r.id;
+			const toolName = meta.tool ?? "";
 			return [{
 				role: "tool_call",
 				content: r.content,
-				...(toolCallId ? { toolCallId, name: toolCallId } : {}),
+				...(toolCallId ? { toolCallId } : {}),
+				name: toolName,
 				toolCall: {
 					id: toolCallId,
-					tool: meta.tool ?? "",
+					tool: toolName,
 					args,
 					...(meta.requiredPermissions ? { requiredPermissions: meta.requiredPermissions } : {}),
 				},
@@ -129,43 +137,26 @@ function persistToolResult(chatId: string, tc: Extract<LlmChunk, { type: "tool_c
 	});
 }
 
-function callSidecar(
+/** Invoke a deck MCP tool directly in-process. Replaces the old sidecar
+ *  `mcp_call` round-trip — the runtime runs inside the same process as the
+ *  deck, so the WebSocket hop bought nothing and added a 30s failure
+ *  surface. Splits `tc.tool` on `::` into `[serverName, toolName]`. */
+async function callDeckMcp(
 	tc: Extract<LlmChunk, { type: "tool_call" }>,
 	signal: AbortSignal,
 ): Promise<{ ok: boolean; result?: unknown; error?: string }> {
-	const { promise, resolve } = Promise.withResolvers<{ ok: boolean; result?: unknown; error?: string }>();
-	if (signal.aborted) {
-		resolve({ ok: false, error: "aborted" });
-		return promise;
+	const [serverName, toolName] = tc.tool.split("::");
+	if (!serverName || !toolName) {
+		return { ok: false, error: `malformed_tool_name:${tc.tool}` };
 	}
-	const dispose = onGholamFrame((frame) => {
-		if (frame.type === "mcp_reply" && frame.id === tc.id) {
-			signal.removeEventListener("abort", onAbort);
-			clearTimeout(timer);
-			dispose();
-			if (frame.ok) resolve({ ok: true, result: frame.result });
-			else resolve({ ok: false, error: typeof frame.error === "string" ? frame.error : "mcp call failed" });
-		}
-	});
-	const onAbort = (): void => {
-		clearTimeout(timer);
-		dispose();
-		resolve({ ok: false, error: "aborted" });
-	};
-	const timer = setTimeout(() => {
-		signal.removeEventListener("abort", onAbort);
-		dispose();
-		resolve({ ok: false, error: "sidecar timeout" });
-	}, SIDECAR_TIMEOUT_MS);
-	signal.addEventListener("abort", onAbort, { once: true });
-	sendGholamFrame({
-		type: "mcp_call",
-		id: tc.id,
-		server: tc.tool,
-		method: "invoke",
-		params: tc.args,
-	});
-	return promise;
+	if (signal.aborted) return { ok: false, error: "aborted" };
+	try {
+		const result = await callGholamMcpTool(serverName, toolName, tc.args, signal);
+		return { ok: true, result };
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: msg };
+	}
 }
 
 /**
@@ -181,16 +172,41 @@ export async function runGholamChat(chatId: string, signal: AbortSignal): Promis
 	}
 	const model = chat.model ?? process.env.OMP_DECK_DEFAULT_MODEL ?? "minimax/MiniMax-M3";
 
+	// Lazy refresh the MCP tool cache. Missing file or loader error → fall
+	// back to a tool-less run, matching the previous behaviour before MCP
+	// wiring landed.
+	const now = Date.now();
+	let toolSpecs: LlmToolSpec[] | undefined;
+	if (!mcpToolsCache || mcpToolsCache.expiresAt <= now) {
+		try {
+			const tools = await loadGholamMcpTools();
+			toolSpecs = tools.map((t) => ({
+				name: `${t.server}::${t.name}`,
+				description: t.description ?? "",
+				schema: (t.inputSchema ?? {}) as Record<string, unknown>,
+			}));
+			mcpToolsCache = { specs: toolSpecs, expiresAt: now + MCP_TOOLS_TTL_MS };
+		} catch (err) {
+			log.warn(`loadGholamMcpTools failed; running without tools`, err);
+		}
+	} else {
+		toolSpecs = mcpToolsCache.specs;
+	}
+
 	try {
 		for (let i = 0; i < MAX_LOOP_ITERATIONS && !signal.aborted; i++) {
 			const prior = listMessages(chatId);
 			const llmMessages = messagesToLlm(prior);
 
+			const completeOpts = toolSpecs && toolSpecs.length > 0
+				? { model, messages: llmMessages, tools: toolSpecs, signal }
+				: { model, messages: llmMessages, signal };
+
 			const toolCalls: Extract<LlmChunk, { type: "tool_call" }>[] = [];
 			let assistantText = "";
 			let thinkingBuffer = "";
 			let sawError: string | undefined;
-			for await (const chunk of gholamDeckLLM.complete({ model, messages: llmMessages, signal })) {
+			for await (const chunk of gholamDeckLLM.complete(completeOpts)) {
 			if (signal.aborted) break;
 				if (chunk.type === "text") {
 					assistantText += chunk.delta;
@@ -249,7 +265,7 @@ export async function runGholamChat(chatId: string, signal: AbortSignal): Promis
 					awaitingExit = true;
 					break;
 				}
-				const reply = await callSidecar(tc, signal);
+				const reply = await callDeckMcp(tc, signal);
 				const resultMsg = persistToolResult(chatId, tc, reply);
 				broadcastBus.broadcast({
 					type: "gholam_chat_message",

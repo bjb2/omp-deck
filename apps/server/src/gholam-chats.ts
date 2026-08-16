@@ -310,6 +310,22 @@ export function cancelChat(chatId: string): GholamChat | null {
 	return updateState(chatId, "paused");
 }
 
+/** Patch the `model` registry ref on a chat row. The runtime loop reads
+ *  `chat.model` on every iteration, so the next turn picks up the new
+ *  model automatically. No-op on soft-deleted chats. */
+export function updateChatModel(chatId: string, model: string): GholamChat | null {
+	const existing = getChat(chatId);
+	if (!existing || existing.deletedAt) return null;
+	getDb()
+		.prepare<unknown, [string, string, string]>(
+			`UPDATE gholam_chats
+			    SET model = ?, updated_at = ?
+			  WHERE id = ?`,
+		)
+		.run(model, nowIso(), chatId);
+	return getChat(chatId);
+}
+
 /** Patch `meta_json` on an existing message row. Shallow-merges `patch`
  *  into the existing `meta` object so callers can add a single key (e.g.
  *  `{ thinking: "..." }`) without rewriting the whole envelope. Used by
