@@ -56,13 +56,19 @@ function openGholamWs(): void {
 	const token = state.gholamToken;
 	if (!token) return;
 	gholamWsState = "connecting";
-	const rawWsUrl = process.env.GHOLAM_WS_URL?.trim() || "";
+	// External sidecar mode is opt-in under the explicit OMP_DECK_GHOLAM_EXTERNAL_URL
+	// key. The legacy GHOLAM_WS_URL was misconfigured several times in production
+	// (pointing at a broken-cert external host that never came up), leaving the
+	// deck stuck "connecting". Renaming to an OMP_* key makes any leftover env
+	// value inert — production always uses the in-process spawn at
+	// ws://127.0.0.1:47900/ws unless this opt-in is set deliberately.
+	const rawWsUrl = process.env.OMP_DECK_GHOLAM_EXTERNAL_URL?.trim() || "";
 	if (rawWsUrl) {
 		// External sidecar mode is opt-in (debugging / multi-host setups only).
 		// Production decks always run gholam in-process via spawnSidecar();
-		// an unexpected GHOLAM_WS_URL is almost always misconfiguration that
+		// an unexpected external URL is almost always misconfiguration that
 		// leaves the deck stuck "connecting" forever, so log loudly.
-		log.warn(`gholam: external sidecar mode active (GHOLAM_WS_URL=${rawWsUrl}). In-process spawn disabled.`);
+		log.warn(`gholam: external sidecar mode active (OMP_DECK_GHOLAM_EXTERNAL_URL=${rawWsUrl}). In-process spawn disabled.`);
 		const base = rawWsUrl.replace(/\/+$/, "");
 		gholamWsUrl = base.endsWith("/ws") ? base : `${base}/ws`;
 	} else if (port) {
