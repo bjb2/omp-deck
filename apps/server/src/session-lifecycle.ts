@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { logger } from "./log.ts";
-import { getDataDir } from "./env-store.ts";
+import { atomicWriteSync, getDataDir } from "./env-store.ts";
 import { patchSessionMeta } from "./db/session-meta.ts";
 
 const log = logger("session-lifecycle");
@@ -35,11 +35,7 @@ async function readPinSet(): Promise<Set<string>> {
 }
 
 async function writePinSet(set: Set<string>): Promise<void> {
-	const dir = path.dirname(PIN_PATH);
-	await fs.mkdir(dir, { recursive: true });
-	const tmp = `${PIN_PATH}.${process.pid}.tmp`;
-	await fs.writeFile(tmp, JSON.stringify([...set]), "utf-8");
-	await fs.rename(tmp, PIN_PATH);
+	await atomicWriteSync(PIN_PATH, JSON.stringify([...set]));
 }
 
 export const sessionLifecycle = {

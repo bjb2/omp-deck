@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 
 import { useStore } from "../lib/store";
-import { size as idbQueueSize } from "../lib/idb-queue";
+import { size as idbQueueSize, storefrontInstalls } from "../lib/idb-queue";
 
 const HEALTHY_MS = 10_000;
 const WARN_MS = 20_000;
@@ -52,6 +52,7 @@ export function ConnectionIndicator(): JSX.Element {
 	const wsStatus = useStore((s) => s.wsStatus);
 	const [now, setNow] = useState(Date.now());
 	const [queued, setQueued] = useState(0);
+	const [storefrontPending, setStorefrontPending] = useState(0);
 
 	useEffect(() => {
 		const t = setInterval(() => setNow(Date.now()), 1000);
@@ -63,15 +64,26 @@ export function ConnectionIndicator(): JSX.Element {
 	// `count()` over a tiny object store per tick — negligible.
 	useEffect(() => {
 		let cancelled = false;
-		const tick = (): void => {
+		const tick = async (): Promise<void> => {
 			idbQueueSize()
 				.then((n) => {
 					if (!cancelled) setQueued(n);
 				})
 				.catch(() => {});
+			// Storefront pill mirrors the frames pill — same polling
+			// cadence, same swallowed-error policy. Only renders when
+			// there's at least one pending install; confirmed installs
+			// don't need a chip on the chrome.
+			try {
+				const rows = await storefrontInstalls.list();
+				if (cancelled) return;
+				setStorefrontPending(rows.filter((r) => r.phase === "pending").length);
+			} catch {
+				// IDB unavailable — keep previous value.
+			}
 		};
-		tick();
-		const t = setInterval(tick, 2000);
+		void tick();
+		const t = setInterval(() => tick(), 2000);
 		return () => {
 			cancelled = true;
 			clearInterval(t);
@@ -109,6 +121,14 @@ export function ConnectionIndicator(): JSX.Element {
 			aria-label={`server ${label}`}
 			className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800/60"
 		>
+			{storefrontPending > 0 ? (
+				<span
+					className="inline-flex items-center rounded-full bg-sky-500/20 px-1.5 py-0.5 font-mono text-2xs text-sky-300"
+					title={`${storefrontPending} storefront install${storefrontPending === 1 ? "" : "s"} pending — will reconcile on next visit`}
+				>
+					storefront: {storefrontPending}
+				</span>
+			) : null}
 			{queued > 0 ? (
 				<span
 					className="inline-flex items-center rounded-full bg-amber-500/20 px-1.5 py-0.5 font-mono text-2xs text-amber-300"

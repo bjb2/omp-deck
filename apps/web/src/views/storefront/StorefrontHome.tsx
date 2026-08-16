@@ -98,11 +98,22 @@ export function StorefrontHome() {
 				<div className="font-mono text-2xs text-ink-3">loading…</div>
 			) : (
 				<>
+					{featured.length === 0 && trending.length === 0 && fresh.length === 0 ? (
+						<StorefrontEmptyHint />
+					) : null}
 					<StoreRow title="Featured" items={featured} />
 					<StoreRow title="Trending" items={trending} />
 					<StoreRow title="New & Noteworthy" items={fresh} />
 				</>
 			)}
+		</div>
+	);
+}
+
+function StorefrontEmptyHint() {
+	return (
+		<div className="rounded-md border border-dashed border-line bg-paper-2 px-3 py-2 font-mono text-2xs text-ink-3">
+				Catalog not loaded yet — open a marketplace source in Settings → Stores.
 		</div>
 	);
 }

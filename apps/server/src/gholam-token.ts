@@ -12,6 +12,8 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { atomicWriteSync } from "./env-store.ts";
+
 const TOKEN_PATH = path.join(
 	process.env.OMP_DECK_DATA_DIR ?? path.join(os.homedir(), ".omp-deck"),
 	"gholam-token.json",
@@ -50,12 +52,10 @@ export async function currentGholamToken(): Promise<string> {
 /** Mint a fresh token, persist it, return the new value. */
 export async function mintGholamToken(): Promise<string> {
 	const token = mintRaw();
-	const dir = path.dirname(TOKEN_PATH);
-	await fs.mkdir(dir, { recursive: true });
-	const tmp = `${TOKEN_PATH}.${process.pid}.tmp`;
+	// Durability: tmp + writeFile + fsync + rename through the shared
+	// atomicWriteSync helper so the persisted token survives a crash mid-write.
 	const record: TokenRecord = { token, mintedAt: new Date().toISOString() };
-	await fs.writeFile(tmp, JSON.stringify(record, null, 2), "utf-8");
-	await fs.rename(tmp, TOKEN_PATH);
+	await atomicWriteSync(TOKEN_PATH, JSON.stringify(record, null, 2));
 	return token;
 }
 

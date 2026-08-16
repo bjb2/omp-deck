@@ -22,6 +22,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(here, "migrations");
 
 let instance: Database | null = null;
+let walCheckpointTimer: ReturnType<typeof setInterval> | null = null;
+const WAL_CHECKPOINT_INTERVAL_MS = 60_000;
 
 export interface DbOpenOpts {
 	/** Absolute path to the sqlite file. Created if missing. */
@@ -36,12 +38,47 @@ export function openDb(opts: DbOpenOpts): Database {
 	const db = new Database(dbPath, { create: true, strict: true });
 	db.exec("PRAGMA journal_mode = WAL");
 	db.exec("PRAGMA foreign_keys = ON");
-	db.exec("PRAGMA synchronous = NORMAL");
+	// FULL = durable — fsync the WAL on every commit. Trades a small
+	// throughput cost on disk-bound workloads for a hard guarantee that
+	// any committed row survives a power loss. Acceptable for the deck's
+	// local store where writes are scarce but correctness is non-negotiable.
+	db.exec("PRAGMA synchronous = FULL");
 
 	applyMigrations(db);
 	seedWelcomeTaskIfEmpty(db);
 
 	instance = db;
+	// Periodic WAL checkpoint keeps the -wal file from growing unbounded
+	// during long uptimes. TRUNCATE fully reclaims space back into the
+	// main DB file. Fire-and-forget; failure here is logged but does not
+	// block the boot path.
+	// Idempotent: the test suite opens/closes the DB many times; only one
+	// interval and one set of exit hooks are needed across the process
+	// lifetime.
+	if (!walCheckpointTimer) {
+		walCheckpointTimer = setInterval(() => {
+			if (!instance) return;
+			try {
+				instance.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+			} catch (err) {
+				log.warn(`wal_checkpoint failed: ${(err as Error).message}`);
+			}
+		}, WAL_CHECKPOINT_INTERVAL_MS);
+		const stopCheckpoint = (): void => {
+			if (walCheckpointTimer) {
+				clearInterval(walCheckpointTimer);
+				walCheckpointTimer = null;
+			}
+		};
+		// Best-effort cleanup on process exit — the interval keeps the
+		// event loop alive, and we want it gone when the server shuts
+		// down. process.once is fine across reopens because we only
+		// register once per process.
+		process.once("exit", stopCheckpoint);
+		process.once("SIGINT", stopCheckpoint);
+		process.once("SIGTERM", stopCheckpoint);
+	}
+
 	log.info(`db ready at ${dbPath}`);
 	return db;
 }
@@ -53,6 +90,10 @@ export function getDb(): Database {
 
 export function closeDb(): void {
 	if (instance) {
+		if (walCheckpointTimer) {
+			clearInterval(walCheckpointTimer);
+			walCheckpointTimer = null;
+		}
 		instance.close();
 		instance = null;
 	}

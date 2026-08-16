@@ -9,6 +9,8 @@ import {
 	type OverviewResponse,
 	type OverviewWindow,
 } from "@/lib/overview-api";
+import { useOverviewGenui } from "@/lib/genui/useOverviewGenui";
+import { GenuiStack } from "@/lib/genui/GenuiRenderer";
 import { cn } from "@/lib/utils";
 
 const WINDOWS: readonly OverviewWindow[] = ["24h", "7d", "30d"];
@@ -264,134 +266,17 @@ export function OverviewView() {
 							</section>
 						) : null}
 
-						<div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-							{/* News */}
-							<section className="flex flex-col gap-3">
-								<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">News</h2>
-								{loading ? (
-									<div className="flex flex-col gap-2">
-										{[0, 1, 2, 3].map((i) => (
-											<Skeleton key={i} className="h-9" />
-										))}
-									</div>
-								) : newsBySource.length === 0 ? (
-									<div className="font-mono text-2xs text-ink-3">no headlines for this window</div>
-								) : (
-									newsBySource.map(([source, items]) => (
-										<div key={source} className="flex flex-col gap-1.5">
-											<div className="font-mono text-2xs uppercase tracking-meta text-ink-4">{source}</div>
-											<ul className="flex flex-col divide-y divide-line rounded-xl border border-line bg-paper">
-												{items.map((item) => (
-													<li key={item.id}>
-														<a
-															href={item.url}
-															target="_blank"
-															rel="noreferrer"
-															className="group flex items-start gap-2 px-3 py-2 text-sm text-ink-2 hover:text-ink"
-														>
-															<span className="flex-1">
-																{item.title}
-																{item.summary ? (
-																	<span className="mt-0.5 block text-xs text-ink-3">
-																		{item.summary}
-																	</span>
-																) : null}
-															</span>
-															<ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-4 group-hover:text-ink-3" />
-														</a>
-													</li>
-												))}
-											</ul>
-										</div>
-									))
-								)}
-							</section>
-
-							{/* Trending repos */}
-							<section className="flex flex-col gap-3">
-								<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">Trending repos</h2>
-								{loading ? (
-									<div className="flex flex-col gap-2">
-										{[0, 1, 2, 3].map((i) => (
-											<Skeleton key={i} className="h-9" />
-										))}
-									</div>
-								) : (data?.trending.length ?? 0) === 0 ? (
-									<div className="font-mono text-2xs text-ink-3">no repos for this window</div>
-								) : (
-									<ul className="flex flex-col divide-y divide-line rounded-xl border border-line bg-paper">
-										{data?.trending.map((repo) => (
-											<li key={repo.id}>
-												<a
-													href={repo.url}
-													target="_blank"
-													rel="noreferrer"
-													className="flex flex-col gap-1 px-3 py-2 hover:bg-paper-3"
-												>
-													<div className="flex items-center justify-between gap-2">
-														<span className="truncate font-mono text-sm text-ink">{repo.name}</span>
-														{typeof repo.stars === "number" ? (
-															<span className="flex shrink-0 items-center gap-1 font-mono text-2xs text-ink-3">
-																<Star className="h-3 w-3" />
-																{repo.stars.toLocaleString()}
-															</span>
-														) : null}
-													</div>
-													{repo.description ? (
-														<span className="line-clamp-2 text-xs text-ink-2">{repo.description}</span>
-													) : null}
-													{repo.language ? (
-														<span className="font-mono text-2xs uppercase tracking-meta text-ink-4">
-															{repo.language}
-														</span>
-													) : null}
-												</a>
-											</li>
-										))}
-									</ul>
-								)}
-							</section>
-						</div>
-
-						{/* Recent activity */}
-						<section className="flex flex-col gap-3">
-							<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">Recent activity</h2>
-							{loading ? (
-								<div className="flex flex-col gap-2">
-									{[0, 1, 2].map((i) => (
-										<Skeleton key={i} className="h-6" />
-									))}
-								</div>
-							) : (data?.events.length ?? 0) === 0 ? (
-								<div className="font-mono text-2xs text-ink-3">nothing logged yet</div>
-							) : (
-								<ol className="flex flex-col border-l border-line pl-4">
-									{data?.events.map((event) => (
-										<li key={event.id} className="relative py-1.5">
-											<span
-												className="absolute -left-[21px] top-3 h-1.5 w-1.5 rounded-full bg-line"
-												aria-hidden="true"
-											/>
-											<div className="flex flex-wrap items-baseline gap-2">
-												<span className="font-mono text-2xs uppercase tracking-meta text-ink-4">
-													{event.kind}
-												</span>
-												{event.href ? (
-													<a href={event.href} className="text-sm text-ink-2 hover:text-ink">
-														{event.title}
-													</a>
-												) : (
-													<span className="text-sm text-ink-2">{event.title}</span>
-												)}
-												<span className="font-mono text-2xs text-ink-4">
-													{new Date(event.at).toLocaleString()}
-												</span>
-											</div>
-										</li>
-									))}
-								</ol>
-							)}
-						</section>
+						<OverviewGenuiSlot
+							range={range}
+							fallback={
+								<OverviewLegacySections
+									loading={loading}
+									newsBySource={newsBySource}
+									trending={data?.trending ?? []}
+									events={data?.events ?? []}
+								/>
+							}
+						/>
 					</div>
 			}
 		/>
@@ -420,4 +305,207 @@ function OverviewSidebar({ streakDays, events }: { streakDays: number; events: n
 
 function Skeleton({ className }: { className?: string }) {
 	return <div className={cn("animate-pulse rounded-md bg-paper-3", className)} aria-hidden="true" />;
+}
+
+/** Legacy news + trending + activity sections, rendered as the inline
+ *  fallback whenever GenUI is offline or empty so the Overview route
+ *  never goes blank. Sourced from the existing `/api/overview` payload. */
+function OverviewLegacySections({
+	loading,
+	newsBySource,
+	trending,
+	events,
+}: {
+	loading: boolean;
+	newsBySource: Array<[string, OverviewNewsItem[]]>;
+	trending: OverviewResponse["trending"];
+	events: OverviewResponse["events"];
+}) {
+	return (
+		<>
+			<div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+				{/* News */}
+				<section className="flex flex-col gap-3">
+					<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">News</h2>
+					{loading ? (
+						<div className="flex flex-col gap-2">
+							{[0, 1, 2, 3].map((i) => (
+								<Skeleton key={i} className="h-9" />
+							))}
+						</div>
+					) : newsBySource.length === 0 ? (
+						<div className="font-mono text-2xs text-ink-3">no headlines for this window</div>
+					) : (
+						newsBySource.map(([source, items]) => (
+							<div key={source} className="flex flex-col gap-1.5">
+								<div className="font-mono text-2xs uppercase tracking-meta text-ink-4">{source}</div>
+								<ul className="flex flex-col divide-y divide-line rounded-xl border border-line bg-paper">
+									{items.map((item) => (
+										<li key={item.id}>
+											<a
+												href={item.url}
+												target="_blank"
+												rel="noreferrer"
+												className="group flex items-start gap-2 px-3 py-2 text-sm text-ink-2 hover:text-ink"
+											>
+												<span className="flex-1">
+													{item.title}
+													{item.summary ? (
+														<span className="mt-0.5 block text-xs text-ink-3">
+															{item.summary}
+														</span>
+													) : null}
+												</span>
+												<ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-4 group-hover:text-ink-3" />
+											</a>
+										</li>
+									))}
+								</ul>
+							</div>
+						))
+					)}
+				</section>
+
+				{/* Trending repos */}
+				<section className="flex flex-col gap-3">
+					<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">Trending repos</h2>
+					{loading ? (
+						<div className="flex flex-col gap-2">
+							{[0, 1, 2, 3].map((i) => (
+								<Skeleton key={i} className="h-9" />
+							))}
+						</div>
+					) : trending.length === 0 ? (
+						<div className="font-mono text-2xs text-ink-3">no repos for this window</div>
+					) : (
+						<ul className="flex flex-col divide-y divide-line rounded-xl border border-line bg-paper">
+							{trending.map((repo) => (
+								<li key={repo.id}>
+									<a
+										href={repo.url}
+										target="_blank"
+										rel="noreferrer"
+										className="flex flex-col gap-1 px-3 py-2 hover:bg-paper-3"
+									>
+										<div className="flex items-center justify-between gap-2">
+											<span className="truncate font-mono text-sm text-ink">{repo.name}</span>
+											{typeof repo.stars === "number" ? (
+												<span className="flex shrink-0 items-center gap-1 font-mono text-2xs text-ink-3">
+													<Star className="h-3 w-3" />
+													{repo.stars.toLocaleString()}
+												</span>
+											) : null}
+										</div>
+										{repo.description ? (
+											<span className="line-clamp-2 text-xs text-ink-2">{repo.description}</span>
+										) : null}
+										{repo.language ? (
+											<span className="font-mono text-2xs uppercase tracking-meta text-ink-4">
+												{repo.language}
+											</span>
+										) : null}
+									</a>
+								</li>
+							))}
+						</ul>
+					)}
+				</section>
+			</div>
+
+			{/* Recent activity */}
+			<section className="flex flex-col gap-3">
+				<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">Recent activity</h2>
+				{loading ? (
+					<div className="flex flex-col gap-2">
+						{[0, 1, 2].map((i) => (
+							<Skeleton key={i} className="h-6" />
+						))}
+					</div>
+				) : events.length === 0 ? (
+					<div className="font-mono text-2xs text-ink-3">nothing logged yet</div>
+				) : (
+					<ol className="flex flex-col border-l border-line pl-4">
+						{events.map((event) => (
+							<li key={event.id} className="relative py-1.5">
+								<span
+									className="absolute -left-[21px] top-3 h-1.5 w-1.5 rounded-full bg-line"
+									aria-hidden="true"
+								/>
+								<div className="flex flex-wrap items-baseline gap-2">
+									<span className="font-mono text-2xs uppercase tracking-meta text-ink-4">
+										{event.kind}
+									</span>
+									{event.href ? (
+										<a href={event.href} className="text-sm text-ink-2 hover:text-ink">
+											{event.title}
+										</a>
+									) : (
+										<span className="text-sm text-ink-2">{event.title}</span>
+									)}
+									<span className="font-mono text-2xs text-ink-4">
+										{new Date(event.at).toLocaleString()}
+									</span>
+								</div>
+							</li>
+						))}
+					</ol>
+				)}
+			</section>
+		</>
+	);
+}
+
+/** GenUI render slot — consumes the SSE pipeline, renders `<GenuiStack>` when
+ *  nodes stream in, and degrades to the legacy news + trending + activity
+ *  sections whenever the stream is empty or errors out. */
+function OverviewGenuiSlot({
+	range,
+	fallback,
+}: {
+	range: OverviewWindow;
+	fallback: React.ReactNode;
+}) {
+	const { nodes, error, isStreaming, retry } = useOverviewGenui(range);
+	const hasNodes = nodes.length > 0;
+
+	return (
+		<section className="flex flex-col gap-3">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">
+					Generated overview
+				</h2>
+				{isStreaming && hasNodes ? (
+					<span className="font-mono text-2xs text-ink-4" aria-live="polite">
+						streaming…
+					</span>
+				) : null}
+			</div>
+
+			{error ? (
+				<div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper px-3 py-2">
+					<span className="font-mono text-2xs text-ink-3">GenUI unavailable — showing raw data</span>
+					<button
+						type="button"
+						onClick={retry}
+						className="rounded-full border border-line bg-paper-2 px-3 py-1 font-mono text-2xs uppercase tracking-meta text-ink hover:border-ink/30"
+					>
+						Retry
+					</button>
+				</div>
+			) : null}
+
+			{hasNodes ? (
+				<GenuiStack nodes={nodes} />
+			) : isStreaming ? (
+				<div className="flex flex-col gap-2">
+					<Skeleton className="h-16 rounded-xl" />
+					<Skeleton className="h-12 rounded-xl" />
+					<Skeleton className="h-12 rounded-xl" />
+					<Skeleton className="h-10 rounded-xl" />
+				</div>
+			) : null}
+
+			{!hasNodes ? fallback : null}
+		</section>
+	);
 }

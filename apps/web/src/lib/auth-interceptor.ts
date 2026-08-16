@@ -55,7 +55,7 @@ export function installAuthInterceptor(): void {
 	installed = true;
 
 	const original = window.fetch.bind(window);
-	window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	window.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const res = await original(input, init);
 		if (res.status !== 401) return res;
 
@@ -66,7 +66,9 @@ export function installAuthInterceptor(): void {
 		// as "you were signed out" would fight the login form it's rendering.
 		if (pathname.startsWith("/api/auth/login") || pathname.startsWith("/api/auth/session")) return res;
 
+
 		notify();
+
 		return res;
-	};
+	}) as typeof fetch;
 }

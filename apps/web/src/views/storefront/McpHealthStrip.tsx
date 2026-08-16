@@ -1,8 +1,10 @@
-import { useEffect, useMemo } from "react";
-import { Activity, AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Loader2, XCircle } from "lucide-react";
 import type { McpHealthResponse } from "@omp-deck/protocol";
 import { useStore } from "@/lib/store";
 import { storefrontApi } from "@/lib/storefront-api";
+import { McpServerActions } from "@/components/mcp/McpServerActions";
+import { McpToolsPopover } from "@/components/mcp/McpToolsPopover";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +22,7 @@ export function McpHealthStrip() {
 	const response = useStore((s) => s.mcpHealth.response);
 	const lastReceivedAtMs = useStore((s) => s.mcpHealth.lastReceivedAtMs);
 	const markStale = useStore((s) => s.markMcpHealthStale);
+	const [toolsFor, setToolsFor] = useState<string | null>(null);
 
 	// Initial hydration + staleness watchdog.
 	useEffect(() => {
@@ -73,34 +76,50 @@ export function McpHealthStrip() {
 				<Activity className={cn("h-3 w-3", data.stale ? "text-warn" : undefined)} />
 				MCP{data.stale ? " · stale" : ""}
 			</div>
-			{data.status.map((s) => {
-				const Icon = iconForState(s.state);
-				const tone = toneForState(s.state);
-				return (
-					<div
-						key={s.id}
-						title={`${s.name} · ${s.state}${s.lastLatencyMs != null ? ` · ${s.lastLatencyMs}ms` : ""}`}
-						className={cn("flex items-center gap-1.5 rounded-md border border-line bg-paper-2 px-2 py-1", tone)}
-					>
-						<Icon className={cn("h-3 w-3", s.state === "healthy" && "animate-pulse")} />
+			{data.status.map((s) => (
+				<div
+					key={s.id}
+					className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-2 py-1"
+				>
+					<span className="flex items-center gap-1.5">
+						<ServerDot state={s.state} />
 						<span className="font-mono text-2xs text-ink">{s.name}</span>
-					</div>
-				);
-			})}
+						{s.lastLatencyMs != null ? (
+							<span className="font-mono text-2xs text-ink-3">{s.lastLatencyMs}ms</span>
+						) : null}
+					</span>
+					<McpServerActions
+						name={s.name}
+						state={s.state}
+						{...(s.toolCount !== undefined ? { toolCount: s.toolCount } : {})}
+						variant="compact"
+						onOpenTools={() => setToolsFor((cur) => (cur === s.name ? null : s.name))}
+					/>
+				</div>
+			))}
+			{toolsFor ? (
+				<div className="relative">
+					<McpToolsPopover name={toolsFor} onClose={() => setToolsFor(null)} />
+				</div>
+			) : null}
 		</div>
 	);
 }
 
-function iconForState(state: McpHealthResponse["status"][number]["state"]) {
-	if (state === "healthy") return CheckCircle2;
-	if (state === "degraded") return AlertCircle;
-	if (state === "unreachable") return XCircle;
-	return Loader2;
-}
+const STATE_DOT: Record<string, string> = {
+	healthy: "text-success",
+	degraded: "text-warn",
+	unreachable: "text-danger",
+	disabled: "text-ink-4",
+	unknown: "text-ink-3",
+};
 
-function toneForState(state: McpHealthResponse["status"][number]["state"]) {
-	if (state === "healthy") return "text-success";
-	if (state === "degraded") return "text-warn";
-	if (state === "unreachable") return "text-danger";
-	return "text-ink-3";
+function ServerDot({ state }: { state: McpHealthResponse["status"][number]["state"] }) {
+	if (state === "healthy") {
+		return <span className={cn("h-1.5 w-1.5 rounded-full bg-current", STATE_DOT[state])} aria-hidden />;
+	}
+	if (state === "unreachable") {
+		return <XCircle className={cn("h-3 w-3", STATE_DOT[state])} />;
+	}
+	return <Activity className={cn("h-3 w-3", STATE_DOT[state])} />;
 }

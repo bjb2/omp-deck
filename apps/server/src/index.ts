@@ -45,6 +45,7 @@ import {
 	notificationService,
 } from "./notifications/index.ts";
 import { setGholamCompanion } from "./gholam.ts";
+import { gholamOverviewProvider, setGenuiProvider, type GenuiProvider } from "./genui-llm.ts";
 import { WebPushChannel } from "./notifications/channels/web-push.ts";
 import type { RestartServerResponse } from "@omp-deck/protocol";
 import { createHash } from "node:crypto";
@@ -141,6 +142,15 @@ async function main(): Promise<void> {
 	// is safe on every boot. Disable with OMP_DECK_INSTALL_STARTER_SKILLS=0.
 	await installStarterSkills();
 	await installStarterExtensions();
+
+	// Wire the GenUI LLM provider into `setGenuiProvider` so the overview
+	// route (`GET /api/genui/stream?route=/`) renders via `gholamDeckLLM`.
+	// The provider captures `config` so the prompt can call
+	// `loadOverviewForPrompt({ config })` per request.
+	const overviewGenuiProvider: GenuiProvider = {
+	complete: (req) => gholamOverviewProvider({ ...req, config }),
+};
+	setGenuiProvider(overviewGenuiProvider);
 
 	// Register notification channels. Browser broadcasts to whatever's
 	// connected right now over the live WebSocket; web-push reaches a closed

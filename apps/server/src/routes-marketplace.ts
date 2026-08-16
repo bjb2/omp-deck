@@ -7,8 +7,10 @@ import type {
 	InstallPluginRequest,
 	InstallPluginResponse,
 	ListMarketplaceResponse,
+	ListMarketplaceUpdatesResponse,
 	MarketplaceSource,
 	UninstallPluginRequest,
+	UpgradePluginRequest,
 } from "@omp-deck/protocol";
 
 interface SetPluginEnabledBody {
@@ -278,6 +280,43 @@ export function buildMarketplaceRouter(service: MarketplaceService): Hono {
 			log.error(`setEnabled failed`, err);
 			return c.json({ error: String((err as Error).message ?? err) }, 500);
 		}
+	});
+
+	app.post("/marketplace/plugins/:id/upgrade", async (c) => {
+		const id = c.req.param("id");
+		if (!id) return c.json({ error: "id is required" }, 400);
+		let body: UpgradePluginRequest = {};
+		try {
+			const raw = await c.req.json().catch(() => ({}));
+			body = (raw ?? {}) as UpgradePluginRequest;
+		} catch {
+			/* tolerate empty body — scope defaults to undefined */
+}
+		try {
+			const installed = await service.upgradePlugin({
+				id,
+				...(body.scope ? { scope: body.scope } : {}),
+	});
+			return c.json({ ok: true, installed });
+		} catch (err) {
+			log.error(`upgrade failed for ${id}`, err);
+			const translated = translateInstallError(err, {
+				name: id.split("@")[0] ?? id,
+				marketplace: id.split("@")[1] ?? "",
+	});
+			return c.json(translated.body, translated.status as 400 | 409 | 422 | 500);
+}
+	});
+
+	app.get("/marketplace/updates", async (c) => {
+		try {
+			const updates = await service.listUpdates();
+			const body: ListMarketplaceUpdatesResponse = { updates };
+			return c.json(body);
+		} catch (err) {
+			log.error("listUpdates failed", err);
+			return c.json({ updates: [] }, 200);
+}
 	});
 
 	return app;

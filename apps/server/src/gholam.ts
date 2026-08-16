@@ -13,6 +13,12 @@
  * The user controls the priority queue — only items in `priorities` are
  * eligible for Gholam to act on. Without priorities Gholam idles.
  *
+ * The sidecar is started from a multi-candidate path search and receives
+ * `GHOLAM_WS_PORT`, `GHOLAM_DECK_TOKEN`, `OMP_DECK_DATA_DIR`,
+ * `OMP_DECK_KB_ROOT`, `MCP_OPENSHIP_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN`,
+ * `MCP_PARALLEL_TOKEN`, `EXA_API_KEY`, and `TAVILY_API_KEY` (plus inherited
+ * `MCP_IDLE_KILL_MS`) from the deck process.
+ *
  * NOTE: the Gholam *chat* runtime (`./gholam-chat.ts`) does NOT depend on this
  * sidecar. It dispatches tool calls through the in-process deck MCP runtime
  * (`./gholam-mcp-runtime.ts`) and stays online even when the sidecar is
@@ -552,9 +558,13 @@ export async function parseRemoteOwnerRepo(cwd: string): Promise<{ owner: string
 }
 
 async function spawnSidecar(): Promise<number> {
-	const containerCandidate = path.resolve(process.cwd(), "..", "gholam", "src", "index.ts");
-	const cwdCandidate = path.join(process.cwd(), "apps", "gholam", "src", "index.ts");
-	const candidate = existsSync(containerCandidate) ? containerCandidate : cwdCandidate;
+	const cwd = process.cwd();
+	const candidates = [
+		path.resolve(cwd, "..", "gholam", "src", "index.ts"),
+		path.join(cwd, "apps", "gholam", "src", "index.ts"),
+		path.resolve(cwd, "..", "..", "gholam", "src", "index.ts"),
+	];
+	const candidate = candidates.find((candidatePath) => existsSync(candidatePath));
 	// If the operator pinned a port (e.g. exposed via deploy env), honor it
 	// exactly. Otherwise pick a deterministic default in the
 	// IANA-dynamic/private range (47900 is what apps/gholam/src/index.ts
@@ -565,13 +575,20 @@ async function spawnSidecar(): Promise<number> {
 	if (!Number.isFinite(basePort) || basePort < 1024 || basePort > 65535) {
 		throw new Error(`OMP_DECK_GHOLAM_PORT=${process.env.OMP_DECK_GHOLAM_PORT} is not a valid port`);
 	}
-	if (!existsSync(candidate)) {
-		throw new Error(`gholam sidecar source not found at ${candidate} — Dockerfile must COPY apps/gholam`);
+	if (!candidate) {
+		throw new Error(`gholam sidecar source not found from cwd ${cwd}; tried: ${candidates.join(", ")}`);
 	}
 	const env: Record<string, string> = {
 		...process.env,
 		GHOLAM_WS_PORT: String(basePort),
 		GHOLAM_DECK_TOKEN: state.gholamToken ?? "",
+		OMP_DECK_DATA_DIR: process.env.OMP_DECK_DATA_DIR ?? "",
+		OMP_DECK_KB_ROOT: process.env.OMP_DECK_KB_ROOT ?? "",
+		MCP_OPENSHIP_TOKEN: process.env.MCP_OPENSHIP_TOKEN ?? "",
+		GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_PERSONAL_ACCESS_TOKEN ?? "",
+		MCP_PARALLEL_TOKEN: process.env.MCP_PARALLEL_TOKEN ?? "",
+		EXA_API_KEY: process.env.EXA_API_KEY ?? "",
+		TAVILY_API_KEY: process.env.TAVILY_API_KEY ?? "",
 	};
 	// Try the pinned port, then bump up to 5 times on EADDRINUSE so a
 	// stale sidecar from a prior crash doesn't wedge the deck.

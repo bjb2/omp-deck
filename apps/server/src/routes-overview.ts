@@ -110,6 +110,56 @@ export interface OverviewResponse {
 	stale?: boolean;
 }
 
+/** Slice of the overview payload the GenUI LLM prompt consumes. Cheaper
+ *  than the full `OverviewResponse` (no receipts count) and explicitly
+ *  typed so the prompt template can render it without a structural cast. */
+export interface OverviewPromptInput {
+	generatedAt: string;
+	window: Window;
+	news: OverviewNewsItem[];
+	trending: OverviewRepo[];
+	events: OverviewEvent[];
+	focus: OverviewFocus;
+	stats: OverviewStat[];
+	costByDay: CostByDayPoint[];
+	sharpHours: OverviewSharpHour[];
+	stale?: boolean;
+}
+
+/** Minimal overview shape the GenUI LLM prompt needs. Wraps
+ *  `buildOverview()` and trims the receipts-today field — the prompt
+ *  never needs it. Called from `genui-llm.ts`. */
+export async function loadOverviewForPrompt(opts: {
+	config: Config;
+	refresh?: boolean;
+}): Promise<OverviewPromptInput> {
+	const dataDir = path.dirname(opts.config.dbPath);
+	const news = new NewsService(dataDir);
+	const window: Window = "7d";
+	const inputs = {
+		window,
+		refresh: opts.refresh === true,
+		news,
+		config: opts.config,
+		allTasks: listTasks(),
+		allStates: listStates(),
+	};
+	const full = await buildOverview({ inputs });
+	const out: OverviewPromptInput = {
+		generatedAt: full.generatedAt,
+		window: full.window,
+		news: full.news,
+		trending: full.trending,
+		events: full.events,
+		focus: full.focus,
+		stats: full.stats,
+		costByDay: full.costByDay,
+		sharpHours: full.sharpHours,
+	};
+	if (full.stale) out.stale = true;
+	return out;
+}
+
 export interface OverviewSharpHour {
 	hour: number;
 	count: number;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ExternalLink, Loader2, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, RefreshCw, Star, Trash2 } from "lucide-react";
 import type { StoreItem, StoreSection } from "@omp-deck/protocol";
 import { storefrontApi } from "@/lib/storefront-api";
 import { marketplaceApi } from "@/lib/marketplace-api";
@@ -80,6 +80,9 @@ export function StorefrontDetail() {
 					) : (
 						<InstallButton item={item} />
 					)}
+					{item.installed && item.updateAvailable ? (
+					<UpdateButton item={item} onUpdated={() => setItem({ ...item, updateAvailable: false })} />
+					) : null}
 				</div>
 				<div className="flex flex-wrap items-center gap-3 pt-2">
 					<DetailLabel label="Author" value={item.author.name} href={item.author.url} />
@@ -196,6 +199,40 @@ function RemoveButton({ item, onRemoved }: { item: StoreItem; onRemoved: () => v
 		>
 			{removing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
 			{removing ? "Removing…" : "Remove"}
+		</button>
+	);
+}
+
+function UpdateButton({ item, onUpdated }: { item: StoreItem; onUpdated: () => void }) {
+	const [updating, setUpdating] = useState(false);
+
+	async function handleUpdate() {
+		if (updating) return;
+		setUpdating(true);
+		try {
+			await storefrontApi.marketplaceUpgrade(item.id);
+			pushToast("info", `Updated ${item.name}`, "Reinstalled from the marketplace catalog.");
+			onUpdated();
+		} catch (err) {
+			setUpdating(false);
+			const e = err as Error & { message?: string };
+			pushToast("error", `Update failed: ${item.name}`, e.message ?? String(err));
+		}
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				void handleUpdate();
+			}}
+			disabled={updating}
+			className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/15 disabled:opacity-50"
+		>
+			{updating ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+			{updating ? "Updating…" : "Update"}
 		</button>
 	);
 }

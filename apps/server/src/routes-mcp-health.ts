@@ -13,5 +13,12 @@ export function buildMcpHealthRouter(probe: McpHealthProbe): Hono {
 		};
 		return c.json(body);
 	});
+	// ponytail: one route. `runOnce` is the only entry point the UI needs to
+	// nudge the loop; no schema, no payload. The probe itself broadcasts
+	// `mcp_health` after each cycle so the UI just re-renders.
+	app.post("/mcp/probe-now", (c) => {
+		void probe.runOnce();
+		return c.json({ ok: true });
+	});
 	return app;
 }

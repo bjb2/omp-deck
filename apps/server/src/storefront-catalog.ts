@@ -3,14 +3,11 @@
  * `/storefront/*` routes serve.
  *
  * Sources, in priority order:
- *   1. Hard-coded seed entries (the Anthropic Claude Sonnet 4 item
- *      documented in §3; ships even when the marketplace can't be
- *      refreshed).
- *   2. The marketplace catalog (`MarketplaceService.listCatalog()`),
+ *   1. The marketplace catalog (`MarketplaceService.listCatalog()`),
  *      wrapped into `StoreItem` with `source.kind = "marketplace"`.
- *   3. The skills service (existing `SkillsService`), wrapped with
+ *   2. The skills service (existing `SkillsService`), wrapped with
  *      `source.kind = "kb"` for the deck-managed user skills.
- *   4. The MCP config (read from `~/.omp/agent/mcp.json`), wrapped
+ *   3. The MCP config (read from `~/.omp/agent/mcp.json`), wrapped
  *      with `source.kind = "web"` (no canonical detail page yet).
  *
  * The catalog is rebuilt on every read; the routes cache the response
@@ -97,34 +94,6 @@ interface McpConfigForCatalog {
 	disabledServers?: string[];
 }
 
-function anthropicSonnet4Seed(): StoreItem {
-	return {
-		id: "claude-sonnet-4@anthropic",
-		section: "plugins" satisfies StoreSection,
-		name: "Anthropic Claude Sonnet 4",
-		tagline: "Anthropic's official Sonnet 4 — wired into the deck as a featured item.",
-		description: "First-party Anthropic model entry. Install wires the Sonnet 4 model into the deck's model picker and marketplace cache.",
-		author: { name: "Anthropic", url: "https://www.anthropic.com" },
-		icon: "https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json",
-		screenshots: [],
-		ratings: { stars: 0, count: 0 },
-		installs: 0,
-		lastUpdated: "2026-08-01T00:00:00.000Z",
-		source: {
-			kind: "marketplace",
-			url: "https://github.com/anthropics/claude-plugins-official",
-			ref: "claude-plugins-official",
-		},
-		versionHistory: [{ version: "0.0.0", date: "2026-08-01", notes: "Seed entry — install wires the real plugin from the marketplace catalog." }],
-		capabilities: { toolNames: ["claude-sonnet-4"], categories: ["model"], triggers: [] },
-		installAction: {
-			kind: "marketplace",
-			payload: { name: "claude-sonnet-4", marketplace: "claude-plugins-official", scope: "user" },
-		},
-		isNew: true,
-	};
-}
-
 async function readMcpServers(): Promise<Array<{ name: string; transport: "stdio" | "http" }>> {
 	const agentDir = loadConfig().agentDir;
 	if (!agentDir) return [];
@@ -147,7 +116,7 @@ async function readMcpServers(): Promise<Array<{ name: string; transport: "stdio
 }
 
 export async function buildStorefrontCatalog(): Promise<StoreItem[]> {
-	const items: StoreItem[] = [anthropicSonnet4Seed()];
+	const items: StoreItem[] = [];
 	try {
 		const extras = await marketplaceExtras.search({ query: "", limit: 200 });
 		for (const e of extras) {
