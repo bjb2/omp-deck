@@ -14,6 +14,9 @@ import type {
 	ListWorktreesResponse,
 	ListWorkspacesResponse,
 	ModelRef,
+	ListFsDialogResponse,
+	RegisterWorkspaceResponse,
+	SessionSummary,
 } from "@omp-deck/protocol";
 
 const BASE = "/api";
@@ -45,6 +48,11 @@ export const api = {
 	listSessions(cwd?: string): Promise<ListSessionsResponse> {
 		const q = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
 		return request<ListSessionsResponse>(`/sessions${q}`);
+	},
+	listGroupedSessions(
+		groupBy: "repo" | "status" | "urgency" | "importance",
+	): Promise<{ groups: Array<{ key: string; sessions: SessionSummary[] }> }> {
+		return request(`/sessions/grouped?groupBy=${encodeURIComponent(groupBy)}`);
 	},
 	createSession(body: CreateSessionRequest): Promise<CreateSessionResponse> {
 		return request<CreateSessionResponse>("/sessions", {
@@ -110,5 +118,16 @@ export const api = {
 	completeFilePath(cwd: string, q: string, limit = 20): Promise<ListFilePathsResponse> {
 		const params = new URLSearchParams({ cwd, q, limit: String(limit) });
 		return request<ListFilePathsResponse>(`/fs/complete?${params.toString()}`);
+	},
+	listFsDialog(cwd: string, q?: string, limit = 200): Promise<ListFsDialogResponse> {
+		const params = new URLSearchParams({ cwd, limit: String(limit) });
+		if (q) params.set("q", q);
+		return request<ListFsDialogResponse>(`/fs/dialog?${params.toString()}`);
+	},
+	registerWorkspace(cwd: string): Promise<RegisterWorkspaceResponse> {
+		return request<RegisterWorkspaceResponse>("/workspaces/register", {
+			method: "POST",
+			body: JSON.stringify({ cwd }),
+		});
 	},
 };

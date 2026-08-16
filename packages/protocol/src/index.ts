@@ -64,6 +64,33 @@ export interface WorkspaceEntry {
 	sessionCount: number;
 }
 
+/**
+ * One entry in the directory-picker response from `GET /api/fs/dialog`.
+ * `path` is the absolute path; `isDir` is always true (the picker only
+ * surfaces subdirectories so the user can drill in).
+ */
+export interface FsDialogEntry {
+	name: string;
+	path: string;
+	isDir: true;
+}
+
+/** Response body for `GET /api/fs/dialog?cwd=<absolute>&q=<>`. */
+export interface ListFsDialogResponse {
+	entries: FsDialogEntry[];
+}
+
+/** Body of `POST /api/workspaces/register`. `cwd` must be an absolute path. */
+export interface RegisterWorkspaceRequest {
+	cwd: string;
+}
+
+/** Response body for `POST /api/workspaces/register`. */
+export interface RegisterWorkspaceResponse {
+	ok: true;
+	workspace: WorkspaceEntry;
+}
+
 export interface CreateSessionRequest {
 	cwd: string;
 	resumeFromPath?: string;

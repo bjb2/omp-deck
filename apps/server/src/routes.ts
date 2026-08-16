@@ -41,6 +41,11 @@ import { buildInboxRouter } from "./routes-inbox.ts";
 import { buildUtilityRouter } from "./routes-cron.ts";
 import { buildSlashCommandsRouter } from "./routes-slash-commands.ts";
 import { buildFsRouter } from "./routes-fs.ts";
+import {
+	buildWorkspacesRouter,
+	extraWorkspaces,
+	seedExtraWorkspaces,
+} from "./routes-workspaces.ts";
 import { buildBridgesRouter } from "./routes-bridges.ts";
 import { buildMarketplaceRouter } from "./routes-marketplace.ts";
 import { buildSkillsRouter } from "./routes-skills.ts";
@@ -123,7 +128,7 @@ export function buildRouter(
 		}
 
 		// Always include default + extras even if zero sessions.
-		const known = new Set<string>([config.defaultCwd, ...config.extraWorkspaces]);
+		const known = new Set<string>([config.defaultCwd, ...extraWorkspaces]);
 		for (const cwd of counts.keys()) known.add(cwd);
 
 		const workspaces: WorkspaceEntry[] = Array.from(known)
@@ -389,6 +394,12 @@ export function buildRouter(
 	app.route("/", buildUtilityRouter());
 	app.route("/", buildSlashCommandsRouter());
 	app.route("/", buildFsRouter());
+	// Workspace registration: picker calls POST /api/workspaces/register to
+	// add a directory the user picked from /fs/dialog to the remembered
+	// extras list. Shares the mutable list with the GET /api/workspaces
+	// handler above (seeded once at startup from Config.extraWorkspaces).
+	seedExtraWorkspaces(config.extraWorkspaces);
+	app.route("/", buildWorkspacesRouter());
 	app.route("/", buildSettingsRouter(bridge, config, opts));
 	app.route("/", buildOrientationRouter());
 	app.route("/", buildBridgesRouter(supervisor));

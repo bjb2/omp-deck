@@ -1,11 +1,44 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { api } from "@/lib/api";
 import { shortPath } from "@/lib/utils";
 import { NewSessionModal } from "@/components/sessions/NewSessionModal";
 import { SessionRow, urgencyRank } from "@/components/sessions/SessionRow";
 import type { SessionSummary } from "@omp-deck/protocol";
 import type { SessionUi } from "@/lib/types";
+
+type GroupBy = "recent" | "repo" | "urgency" | "importance";
+
+const GROUP_BY_STORAGE_KEY = "omp-deck.sidebar.groupBy";
+
+function readStoredGroupBy(): GroupBy {
+	if (typeof window === "undefined") return "recent";
+	const v = window.localStorage.getItem(GROUP_BY_STORAGE_KEY);
+	if (v === "repo" || v === "urgency" || v === "importance") return v;
+	return "recent";
+}
+
+function persistGroupBy(v: GroupBy): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.setItem(GROUP_BY_STORAGE_KEY, v);
+	} catch {
+		/* swallow: localStorage may be unavailable (private mode, quota) */
+	}
+}
+
+function sortByUrgencyThenUpdated<T extends { urgency?: SessionSummary["urgency"]; updatedAt: string; createdAt: string }>(
+	arr: T[],
+): T[] {
+	return arr
+		.slice()
+		.sort((a, b) => {
+			const u = urgencyRank(b.urgency) - urgencyRank(a.urgency);
+			if (u !== 0) return u;
+			return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+		});
+}
 
 export function Sidebar() {
 	const workspaces = useStore((s) => s.workspaces);
@@ -25,6 +58,40 @@ export function Sidebar() {
 	const [selectedCwd, setSelectedCwd] = useState<string | "">("");
 	const [creating, setCreating] = useState(false);
 	const [modalOpen, setModalOpen] = useState(false);
+	const [groupBy, setGroupBy] = useState<GroupBy>(() => readStoredGroupBy());
+	const [groupedGroups, setGroupedGroups] = useState<Array<{ key: string; sessions: SessionSummary[] }>>([]);
+	const [groupedLoading, setGroupedLoading] = useState(false);
+
+	useEffect(() => {
+		persistGroupBy(groupBy);
+		if (groupBy === "recent") {
+			setGroupedGroups([]);
+			return;
+		}
+		let cancelled = false;
+		setGroupedLoading(true);
+		void api
+			.listGroupedSessions(groupBy)
+			.then((res) => {
+				if (cancelled) return;
+				const groups = (res.groups ?? []).map((g) => ({
+					key: g.key,
+					sessions: sortByUrgencyThenUpdated(g.sessions),
+				}));
+				setGroupedGroups(groups);
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				console.error("listGroupedSessions failed", err);
+				setGroupedGroups([]);
+			})
+			.finally(() => {
+				if (!cancelled) setGroupedLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [groupBy]);
 
 	const cwdInUse = selectedCwd || defaultCwd;
 
@@ -159,48 +226,99 @@ export function Sidebar() {
 				</button>
 			</div>
 
+			<div className="px-3 pb-2">
+				<label className="meta block pb-1" htmlFor="sidebar-group-by">
+					Group by
+				</label>
+				<select
+					id="sidebar-group-by"
+					value={groupBy}
+					onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+					className="field h-7 w-full px-2 font-mono text-xs"
+				>
+					<option value="recent">Recent</option>
+					<option value="repo">Repo</option>
+					<option value="urgency">Urgency</option>
+					<option value="importance">Importance</option>
+				</select>
+			</div>
+
 			<div className="flex-1 overflow-y-auto px-1 pb-3">
-				{liveSessions.map((s) => (
-					<SessionRow
-						key={s.sessionId}
-						summary={liveSummaryFromUi(s)}
-						title={s.sessionName ?? undefined}
-						subtitle={shortPath(s.cwd, 30)}
-						live
-						planMode={s.planMode?.enabled === true}
-						active={s.sessionId === activeId}
-						updatedAt={s.meta?.aiGeneratedAt ?? undefined}
-						sessionId={s.sessionId}
-						onClick={() => selectSession(s.sessionId)}
-						onArchive={(id) => void archiveSession(id)}
-						onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
-						onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
-						onSetImportance={(id, i) => void setSessionImportance(id, i)}
-					/>
-				))}
+				{groupBy === "recent" ? (
+					<>
+						{liveSessions.map((s) => (
+							<SessionRow
+								key={s.sessionId}
+								summary={liveSummaryFromUi(s)}
+								title={s.sessionName ?? undefined}
+								subtitle={shortPath(s.cwd, 30)}
+								live
+								planMode={s.planMode?.enabled === true}
+								active={s.sessionId === activeId}
+								updatedAt={s.meta?.aiGeneratedAt ?? undefined}
+								sessionId={s.sessionId}
+								onClick={() => selectSession(s.sessionId)}
+								onArchive={(id) => void archiveSession(id)}
+								onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+								onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+								onSetImportance={(id, i) => void setSessionImportance(id, i)}
+							/>
+						))}
 
-				{liveSessions.length > 0 && persisted.length > 0 ? (
-					<div className="my-2 mx-2 border-t border-line" />
-				) : null}
+						{liveSessions.length > 0 && persisted.length > 0 ? (
+							<div className="my-2 mx-2 border-t border-line" />
+						) : null}
 
-				{persisted.map((s) => (
-					<SessionRow
-						key={s.id}
-						summary={s}
-						subtitle={shortPath(s.cwd, 30)}
-						onClick={() => void handleResume(s.path)}
-						onArchive={(id) => void archiveSession(id)}
-						onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
-						onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
-						onSetImportance={(id, i) => void setSessionImportance(id, i)}
-					/>
-				))}
+						{persisted.map((s) => (
+							<SessionRow
+								key={s.id}
+								summary={s}
+								subtitle={shortPath(s.cwd, 30)}
+								onClick={() => void handleResume(s.path)}
+								onArchive={(id) => void archiveSession(id)}
+								onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+								onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+								onSetImportance={(id, i) => void setSessionImportance(id, i)}
+							/>
+						))}
 
-				{filtered.length === 0 && liveSessions.length === 0 ? (
-					<div className="px-3 py-6 text-center font-mono text-2xs text-ink-3">
-						No sessions yet.
-					</div>
-				) : null}
+						{filtered.length === 0 && liveSessions.length === 0 ? (
+							<div className="px-3 py-6 text-center font-mono text-2xs text-ink-3">
+								No sessions yet.
+							</div>
+						) : null}
+					</>
+				) : (
+					<>
+						{groupedLoading && groupedGroups.length === 0 ? (
+							<div className="px-3 py-6 text-center font-mono text-2xs text-ink-3">
+								Loading…
+							</div>
+						) : null}
+						{groupedGroups.map((g) => (
+							<div key={g.key} className="px-2 py-1">
+								<div className="meta px-1 pb-1 uppercase">{g.key}</div>
+								{g.sessions.map((s) => (
+									<SessionRow
+										key={s.id}
+										summary={s}
+										subtitle={shortPath(s.cwd, 30)}
+										onClick={() => void handleResume(s.path)}
+										onArchive={(id) => void archiveSession(id)}
+										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+									/>
+								))}
+							</div>
+						))}
+						{!groupedLoading && groupedGroups.length === 0 ? (
+							<div className="px-3 py-6 text-center font-mono text-2xs text-ink-3">
+								No sessions in this grouping.
+							</div>
+						) : null}
+					</>
+				)}
 			</div>
 		</div>
 	);

@@ -5,16 +5,14 @@
  *   2. Managed repo + worktree — fetch `/api/repos` and `/api/repos/:owner/:repo/worktrees`,
  *      collapsible per-repo accordion. Picking (repo, branch) calls `createSession`
  *      with `repoId` + `worktreeBranch` and lets the server resolve cwd.
- *   3. Manual cwd input — for any path the user types by hand. (No native directory
- *      picker: backend has no `GET /api/fs/dialog` endpoint. Free-text is the
- *      MVP until that route lands.)
+ *   3. Directory browser — type or paste a path, or browse server-side folders.
  *
  * Plus "Resume from recent" — top 5 newest persisted sessions, freshest first.
  *
  * Modal stays out of sessionRow/chatHeader territory; it only owns the create path.
  */
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, FolderGit2, FolderOpen, History, Plus, RefreshCw } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronRight, FolderGit2, FolderOpen, History, Plus, RefreshCw, Search } from "lucide-react";
 import type { RepoEntry, SessionSummary, WorktreeEntry } from "@omp-deck/protocol";
 
 import { Modal } from "@/components/ui/Modal";
@@ -37,7 +35,7 @@ export function NewSessionModal({ open, onClose, onCreated }: Props): JSX.Elemen
 	const sessions = useStore((s) => s.sessions);
 	const sessionsById = useStore((s) => s.sessionsById);
 	const createSession = useStore((s) => s.createSession);
-
+	const refreshWorkspaces = useStore((s) => s.refreshWorkspaces);
 	// Section-1
 	const [selectedCwd, setSelectedCwd] = useState<string>(defaultCwd);
 	// Section-2
@@ -48,7 +46,14 @@ export function NewSessionModal({ open, onClose, onCreated }: Props): JSX.Elemen
 	const [worktreesByRepo, setWorktreesByRepo] = useState<Record<string, WorktreeEntry[]>>({});
 	// Section-3
 	const [manualCwd, setManualCwd] = useState<string>(defaultCwd);
-
+	const [browserOpen, setBrowserOpen] = useState(false);
+	const [browserCwd, setBrowserCwd] = useState<string>(defaultCwd);
+	const [browserQuery, setBrowserQuery] = useState("");
+	const [browserEntries, setBrowserEntries] = useState<Array<{ name: string; path: string; isDir: boolean }>>([]);
+	const [browserLoading, setBrowserLoading] = useState(false);
+	const [browserError, setBrowserError] = useState<string | null>(null);
+	const [registering, setRegistering] = useState(false);
+	const [registeredLabel, setRegisteredLabel] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +64,13 @@ export function NewSessionModal({ open, onClose, onCreated }: Props): JSX.Elemen
 		setManualCwd(defaultCwd);
 		setOpenRepoKey(null);
 		setError(null);
+		setBrowserOpen(false);
+		setBrowserCwd(defaultCwd);
+		setBrowserQuery("");
+		setBrowserEntries([]);
+		setBrowserError(null);
+		setRegistering(false);
+		setRegisteredLabel(null);
 	}, [open, defaultCwd]);
 
 	// Fetch managed repos when modal opens.
@@ -77,6 +89,77 @@ export function NewSessionModal({ open, onClose, onCreated }: Props): JSX.Elemen
 	useEffect(() => {
 			if (open) void reloadRepos();
 	}, [open]);
+
+	async function loadBrowser(cwd: string, q = ""): Promise<void> {
+		setBrowserLoading(true);
+		setBrowserError(null);
+		try {
+			const resp = await api.listFsDialog(cwd, q);
+			setBrowserEntries(resp.entries ?? []);
+		} catch (err) {
+			setBrowserError((err as Error).message);
+			setBrowserEntries([]);
+		} finally {
+			setBrowserLoading(false);
+		}
+	}
+
+	function parentDir(cwd: string): string {
+		const idx = Math.max(cwd.lastIndexOf("/"), cwd.lastIndexOf("\\"));
+		if (idx < 0) return cwd;
+		if (/^[A-Za-z]:[\\/]/.test(cwd) && idx === 2) return `${cwd.slice(0, 2)}\\`;
+		if (idx === 0) return "/";
+		return cwd.slice(0, idx);
+	}
+
+	function openBrowser(): void {
+		const seed = manualCwd.trim() || defaultCwd;
+		setBrowserCwd(seed);
+		setBrowserQuery("");
+		setBrowserEntries([]);
+		setBrowserError(null);
+		setRegisteredLabel(null);
+		setBrowserOpen(true);
+		void loadBrowser(seed);
+	}
+
+	function goInto(entry: { path: string; isDir: boolean }): void {
+		if (!entry.isDir) return;
+		setBrowserCwd(entry.path);
+		setBrowserQuery("");
+		setRegisteredLabel(null);
+		void loadBrowser(entry.path);
+	}
+
+	function goUp(): void {
+		const next = parentDir(browserCwd);
+		setBrowserCwd(next);
+		setBrowserQuery("");
+		setRegisteredLabel(null);
+		void loadBrowser(next);
+	}
+
+	function pickDirectory(): void {
+		setManualCwd(browserCwd);
+		setRegisteredLabel(null);
+	}
+
+	async function registerManual(): Promise<void> {
+		const target = manualCwd.trim();
+		if (!target) return;
+		setRegistering(true);
+		setRegisteredLabel(null);
+		setError(null);
+		try {
+			const resp = await api.registerWorkspace(target);
+			setRegisteredLabel(resp.workspace.label);
+			await refreshWorkspaces();
+		} catch (err) {
+			setError(`Failed to register workspace: ${(err as Error).message}`);
+		} finally {
+			setRegistering(false);
+		}
+	}
 
 	const recentPersisted = useMemo<SessionSummary[]>(() => {
 		return [...sessions]
@@ -258,18 +341,109 @@ export function NewSessionModal({ open, onClose, onCreated }: Props): JSX.Elemen
 								placeholder="Absolute path…"
 								className="field h-8 w-full px-2 font-mono text-xs"
 							/>
+			<div className="mt-2 flex gap-2">
 							<button
-								type="button"
-								disabled={busy || !manualCwd.trim()}
-								onClick={() => void submit("manual", { cwd: manualCwd.trim() })}
-								className="btn-secondary mt-2 h-9 w-full text-sm"
-							>
-								Open here
-							</button>
-							<p className="mt-1 font-mono text-2xs text-ink-3">
-								Native directory picker unavailable — backend has no dialog endpoint. Type a path.
-							</p>
-						</section>
+					type="button"
+					disabled={busy || !manualCwd.trim()}
+					onClick={() => void submit("manual", { cwd: manualCwd.trim() })}
+					className="btn-secondary h-9 flex-1 text-sm"
+				>
+					Open here
+				</button>
+							<button
+					type="button"
+					disabled={busy || !manualCwd.trim() || registering}
+					onClick={() => void registerManual()}
+					className="btn-ghost h-9 text-xs"
+				>
+					{registering ? "Registering…" : "Register workspace"}
+				</button>
+							<button
+					type="button"
+					disabled={busy}
+					onClick={openBrowser}
+					className="btn-ghost h-9 text-xs"
+				>
+					{browserOpen ? "Hide browser" : "Browse"}
+				</button>
+							</div>
+			{registeredLabel ? (
+				<p className="mt-1 font-mono text-2xs text-ink-3">
+					Registered “{registeredLabel}” — appears in the workspace picker.
+				</p>
+			) : null}
+			{browserOpen ? (
+				<div className="mt-2 rounded border border-line bg-paper-2">
+					<div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
+							<button
+							type="button"
+							disabled={browserLoading || browserCwd === "/" || browserCwd === ""}
+							onClick={goUp}
+							className="btn-ghost h-6 px-2 text-2xs"
+							title="Parent directory"
+						>
+							<ArrowUp className="h-3 w-3" />
+							Up
+						</button>
+						<span className="flex-1 truncate font-mono text-2xs text-ink-3" title={browserCwd}>
+							{browserCwd || "(unset)"}
+						</span>
+						<div className="relative">
+							<Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-3" />
+							<input
+								type="text"
+								value={browserQuery}
+								onChange={(e) => {
+									setBrowserQuery(e.target.value);
+									void loadBrowser(browserCwd, e.target.value);
+								}}
+								placeholder="filter…"
+								className="field h-6 w-32 pl-6 pr-2 font-mono text-2xs"
+							/>
+							</div>
+							</div>
+					<div className="max-h-56 overflow-y-auto">
+						{browserLoading ? (
+							<div className="px-3 py-2 font-mono text-2xs text-ink-3">loading…</div>
+						) : browserError ? (
+							<div className="px-3 py-2 font-mono text-2xs text-danger">{browserError}</div>
+						) : browserEntries.length === 0 ? (
+							<div className="px-3 py-2 font-mono text-2xs text-ink-3">No subdirectories.</div>
+						) : (
+							<ul className="flex flex-col">
+								{browserEntries.map((e) => (
+									<li key={e.path}>
+							<button
+											type="button"
+											disabled={busy}
+											onClick={() => goInto(e)}
+											className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-paper-3"
+											title={e.path}
+										>
+											<FolderOpen className="h-3 w-3 text-ink-3" />
+											<span className="truncate font-mono text-ink">{e.name}</span>
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+							</div>
+					<div className="flex items-center justify-between gap-2 border-t border-line px-2 py-1.5">
+						<span className="truncate font-mono text-2xs text-ink-3" title={browserCwd}>
+							{shortPath(browserCwd, 60)}
+						</span>
+							<button
+							type="button"
+							disabled={busy || !browserCwd}
+							onClick={pickDirectory}
+							className="btn-primary h-7 px-3 text-xs"
+						>
+							Use this folder
+						</button>
+							</div>
+							</div>
+			) : null}
+		</section>
 
 						{/* 4. Resume recent */}
 						{recentPersisted.length > 0 ? (
