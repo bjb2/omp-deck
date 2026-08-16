@@ -60,6 +60,8 @@ export function GholamView(): JSX.Element {
 		everOnlineRef.current = true;
 		setLastOfflineError(undefined);
 	} catch (e) {
+		setState(null);
+		setPriorities([]);
 		setError(String((e as Error).message ?? e));
 		setLastOfflineError(String((e as Error).message ?? e));
 	}
