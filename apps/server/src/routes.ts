@@ -14,8 +14,24 @@ import { logger } from "./log.ts";
 import { getBuildInfo, getUptimeSecs } from "./build-info.ts";
 import { getUpdateCheck } from "./update-check.ts";
 import type { AgentBridge } from "./bridge/types.ts";
+import {
+	decorateSessions,
+	isSessionImportance,
+	isSessionStatus,
+	isSessionUrgency,
+	patchSessionMeta,
+} from "./db/session-meta.ts";
+import { resolveWorktreeDir } from "./worktree-service.ts";
+import type {
+	GroupedSessionsResponse,
+	PatchSessionRequest,
+	SessionSummary,
+} from "@omp-deck/protocol";
+import { existsSync } from "node:fs";
 
 const log = logger("routes");
+
+const VALID_GROUP_BY = new Set(["repo", "status", "urgency", "importance"]);
 
 import { buildTasksRouter } from "./routes-tasks.ts";
 import { buildSettingsRouter } from "./routes-settings.ts";
@@ -39,6 +55,8 @@ import { buildFilesRouter } from "./routes-files.ts";
 import { buildShellRouter } from "./routes-shell.ts";
 import { buildGitRouter } from "./routes-git.ts";
 import { buildGitHubRouter } from "./routes-github.ts";
+import { buildReposRouter } from "./routes-repos.ts";
+import { buildWorktreesRouter } from "./routes-worktrees.ts";
 import { buildAgentConfigRouter } from "./routes-agent-config.ts";
 import { buildPushRouter } from "./routes-push.ts";
 import { buildHarnessRouter } from "./routes-harness.ts";
@@ -125,9 +143,28 @@ export function buildRouter(
 
 	app.get("/sessions", async (c) => {
 		const cwd = c.req.query("cwd");
+		const includeArchived = c.req.query("archived") === "1";
+		const filterRepoId = c.req.query("repoId")?.trim() || undefined;
+		const filterUrgency = c.req.query("urgency");
+		const filterImportance = c.req.query("importance");
 		try {
 			const sessions = await bridge.listSessions(cwd ? { cwd } : {});
-			const body: ListSessionsResponse = { sessions };
+			let decorated: SessionSummary[] = decorateSessions(
+				sessions.map((s) => ({ ...s })),
+			) as SessionSummary[];
+			if (!includeArchived) {
+				decorated = decorated.filter((s) => s.archived !== true);
+			}
+			if (filterRepoId) {
+				decorated = decorated.filter((s) => s.repoId === filterRepoId);
+			}
+			if (filterUrgency && isSessionUrgency(filterUrgency)) {
+				decorated = decorated.filter((s) => s.urgency === filterUrgency);
+			}
+			if (filterImportance && isSessionImportance(filterImportance)) {
+				decorated = decorated.filter((s) => s.importance === filterImportance);
+			}
+			const body: ListSessionsResponse = { sessions: decorated };
 			return c.json(body);
 		} catch (err) {
 			log.error(`listSessions failed`, err);
@@ -143,7 +180,29 @@ export function buildRouter(
 			return c.json({ error: "invalid json body" }, 400);
 		}
 
-		const cwd = body.cwd?.trim() || config.defaultCwd;
+		let cwd = body.cwd?.trim() || config.defaultCwd;
+		let repoIdForBind: string | null = null;
+		let worktreeForBind: string | null = null;
+		if (
+			typeof body.repoId === "string" &&
+			typeof body.worktreeBranch === "string" &&
+			body.repoId &&
+			body.worktreeBranch
+		) {
+			const slash = body.repoId.indexOf("/");
+			if (slash <= 0 || slash === body.repoId.length - 1) {
+				return c.json({ error: "repoId must be in <owner>/<repo> form" }, 400);
+			}
+			const owner = body.repoId.slice(0, slash);
+			const repo = body.repoId.slice(slash + 1);
+			const wtDir = resolveWorktreeDir(owner, repo, body.worktreeBranch);
+			if (!existsSync(wtDir)) {
+				return c.json({ error: `worktree path not found: ${wtDir}` }, 400);
+			}
+			cwd = wtDir;
+			repoIdForBind = body.repoId;
+			worktreeForBind = body.worktreeBranch;
+		}
 
 		try {
 			const handle = body.resumeFromPath
@@ -153,6 +212,12 @@ export function buildRouter(
 						...(body.model ? { model: body.model } : {}),
 						...(body.suppressAutoStart ? { suppressAutoStart: true } : {}),
 					});
+			if (repoIdForBind && worktreeForBind) {
+				patchSessionMeta(handle.sessionId, {
+					repoId: repoIdForBind,
+					worktree: worktreeForBind,
+				});
+			}
 			const resp: CreateSessionResponse = {
 				sessionId: handle.sessionId,
 				sessionFile: handle.sessionFile,
@@ -201,19 +266,30 @@ export function buildRouter(
 
 	app.patch("/sessions/:id", async (c) => {
 		const id = c.req.param("id");
-		const handle = bridge.getSession(id);
-		if (!handle) return c.json({ error: "session not found or not active" }, 404);
-		let body: { name?: string; model?: { provider?: unknown; id?: unknown } };
+		// PATCH operates on metadata for any session (active or not) so the
+		// UI can archive / re-urgency a session that is no longer running.
+		// Title and model edits still need an in-memory handle, so those
+		// are guarded by `handle` presence.
+		let body: PatchSessionRequest & { model?: { provider?: unknown; id?: unknown } };
 		try {
-			body = (await c.req.json()) as { name?: string; model?: { provider?: unknown; id?: unknown } };
+			body = (await c.req.json()) as typeof body;
 		} catch {
 			return c.json({ error: "invalid json" }, 400);
 		}
+		const metaPatch: Parameters<typeof patchSessionMeta>[1] = {};
+		if (body.archived !== undefined) metaPatch.archived = body.archived;
+		if (isSessionUrgency(body.urgency)) metaPatch.urgency = body.urgency;
+		if (isSessionImportance(body.importance)) metaPatch.importance = body.importance;
+		if (isSessionStatus(body.status)) metaPatch.status = body.status;
+		if (Object.keys(metaPatch).length > 0) {
+			patchSessionMeta(id, metaPatch);
+		}
+		const handle = bridge.getSession(id);
 		try {
-			if (typeof body.name === "string") {
-				await handle.setName(body.name.trim());
+			if (typeof body.title === "string" && handle) {
+				await handle.setName(body.title.trim());
 			}
-			if (body.model && typeof body.model === "object") {
+			if (handle && body.model && typeof body.model === "object") {
 				const provider = typeof body.model.provider === "string" ? body.model.provider : "";
 				const modelId = typeof body.model.id === "string" ? body.model.id : "";
 				if (!provider || !modelId) {
@@ -228,6 +304,50 @@ export function buildRouter(
 		}
 	});
 
+	app.get("/sessions/grouped", async (c) => {
+		const groupBy = c.req.query("groupBy") ?? "";
+		if (!VALID_GROUP_BY.has(groupBy)) {
+			return c.json({ error: `groupBy must be one of: ${[...VALID_GROUP_BY].join(", ")}` }, 400);
+		}
+		try {
+			const decorated = decorateSessions(
+				(await bridge.listSessions({})).map((s) => ({ ...s })),
+			) as SessionSummary[];
+			const groups = new Map<string, SessionSummary[]>();
+			for (const s of decorated) {
+				// `groupBy` is already validated against VALID_GROUP_BY above,
+				// so the switch below is exhaustive — we still default-throw
+				// for safety, but the compiler can prove that path is unreachable.
+				let key: string;
+				switch (groupBy as string) {
+					case "repo":
+						key = s.repoId ?? "(none)";
+						break;
+					case "status":
+						key = s.status ?? "active";
+						break;
+					case "urgency":
+						key = s.urgency ?? "normal";
+						break;
+					case "importance":
+						key = s.importance ?? "normal";
+						break;
+					default:
+						throw new Error(`unreachable groupBy: ${groupBy}`);
+				}
+				const bucket = groups.get(key);
+				if (bucket) bucket.push(s);
+				else groups.set(key, [s]);
+			}
+			const resp: GroupedSessionsResponse = {
+				groups: [...groups.entries()].map(([key, sessions]) => ({ key, sessions })),
+			};
+			return c.json(resp);
+		} catch (err) {
+			log.error(`grouped sessions failed`, err);
+			return c.json({ error: String((err as Error).message ?? err) }, 500);
+		}
+	});
 	app.get("/models", async (c) => {
 		const sessionId = c.req.query("sessionId");
 		try {
@@ -260,6 +380,8 @@ export function buildRouter(
 	});
 
 	app.route("/", buildTasksRouter(bridge));
+	app.route("/", buildReposRouter());
+	app.route("/", buildWorktreesRouter());
 	app.route("/", buildUploadsRouter({ uploadsRoot: config.uploadsRoot }));
 	app.route("/", buildRoutinesRouter(runner));
 	app.route("/", buildHooksRouter(runner));

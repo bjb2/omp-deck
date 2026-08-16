@@ -38,6 +38,15 @@ export interface SessionSummary {
 	createdAt: string;
 	updatedAt: string;
 	messageCount: number;
+	/** Deck-managed flag; false until the operator archives the session. */
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+	/** `<owner>/<repo>` id of the bound repo, if any. */
+	repoId?: string;
+	/** Worktree branch the session is bound to; resolved to a path on read. */
+	worktree?: string;
 }
 
 export interface WorkspaceEntry {
@@ -52,6 +61,10 @@ export interface CreateSessionRequest {
 	model?: ModelRef;
 	/** Do not fire the configured auto-start prompt when this creates a fresh session. */
 	suppressAutoStart?: boolean;
+	/** `<owner>/<repo>` id; when paired with `worktreeBranch` the session binds to that path. */
+	repoId?: string;
+	/** Branch name of a managed worktree; if both set and path exists, `cwd` is overridden. */
+	worktreeBranch?: string;
 }
 
 export interface CreateSessionResponse {
@@ -62,7 +75,32 @@ export interface CreateSessionResponse {
 
 export interface ListSessionsQuery {
 	cwd?: string;
+	/** `"1"` to include archived sessions in the list. */
+	archived?: string;
+	/** Group by `repo` | `status` | `urgency` | `importance`. */
+	groupBy?: string;
+	/** Filter by `<owner>/<repo>` id. */
+	repoId?: string;
+	/** Filter by urgency value (`low` | `normal` | `high` | `critical`). */
+	urgency?: string;
+	/** Filter by importance value (`low` | `normal` | `high` | `critical`). */
+	importance?: string;
 }
+/** Body of `PATCH /api/sessions/:id`. Any subset of fields; unspecified fields are left unchanged. */
+export interface PatchSessionRequest {
+	title?: string;
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+}
+
+/** Urgency dial surfaced on the session row. Drives the badge colour in the sidebar. */
+export type SessionUrgency = "low" | "normal" | "high" | "critical";
+/** Importance dial surfaced on the session row. Independent of urgency. */
+export type SessionImportance = "low" | "normal" | "high" | "critical";
+/** Lifecycle status surfaced on the session row. Defaults to `active`. */
+export type SessionStatus = "active" | "idle" | "archived" | "error";
 
 export interface ListSessionsResponse {
 	sessions: SessionSummary[];
@@ -2597,4 +2635,72 @@ export interface CreateGholamChatMessageRequest {
 
 export interface RestartGholamChatRequest {
 	prompt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Managed repos + worktrees (Claude-Code-style "pick a repo, open a worktree")
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One cloned GitHub repo managed under `~/omp-repos/<owner>/<repo>.git`. */
+export interface RepoEntry {
+	owner: string;
+	repo: string;
+	cloneUrl: string;
+	clonePath: string;
+	defaultBranch: string;
+	/** Local branch refs (capped). */
+	branches: string[];
+	/** Worktrees currently attached to this repo. */
+	worktrees: WorktreeEntry[];
+	lastClonedAt: string;
+}
+
+/** Body of `POST /api/repos`. `token` overrides the global GitHub token for this clone. */
+export interface CreateRepoRequest {
+	owner: string;
+	repo: string;
+	token?: string;
+}
+
+export interface ListReposResponse {
+	repos: RepoEntry[];
+}
+
+export interface CreateRepoResponse {
+	repo: RepoEntry;
+}
+
+/** One git worktree attached to a managed repo. Lives at
+ *  `~/omp-repos/<owner>/<repo>.worktrees/<branch>`. */
+export interface WorktreeEntry {
+	owner: string;
+	repo: string;
+	branch: string;
+	path: string;
+	/** True iff this worktree matches the bare clone's currently checked-out branch. */
+	isCurrent: boolean;
+	createdAt: string;
+	/** Number of sessions currently bound to this worktree path. */
+	sessionCount?: number;
+}
+
+/** Body of `POST /api/repos/:owner/:repo/worktrees`. */
+export interface CreateWorktreeRequest {
+	branch: string;
+	/** Base ref for a new branch. Defaults to the repo's HEAD when omitted. */
+	base?: string;
+}
+
+export interface ListWorktreesResponse {
+	worktrees: WorktreeEntry[];
+}
+
+export interface CreateWorktreeResponse {
+	worktree: WorktreeEntry;
+}
+
+/** Response body for `GET /api/sessions/grouped`. Buckets are emitted in
+ *  insertion order of the matched sessions. Empty buckets are omitted. */
+export interface GroupedSessionsResponse {
+	groups: Array<{ key: string; sessions: SessionSummary[] }>;
 }

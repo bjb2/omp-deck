@@ -16,6 +16,7 @@ import * as path from "node:path";
 
 import { logger } from "./log.ts";
 import { getDataDir } from "./env-store.ts";
+import { patchSessionMeta } from "./db/session-meta.ts";
 
 const log = logger("session-lifecycle");
 
@@ -59,6 +60,14 @@ export const sessionLifecycle = {
 			// surfaces on resume for review.
 			await handle.dispose();
 		}
+		// Persist the deck-managed metadata flag so the sidebar's filter
+		// surfaces the session in its archived bucket regardless of SDK
+		// state. Idempotent.
+		patchSessionMeta(id, { archived: true, status: "archived" });
+	},
+
+	async unarchive(id: string): Promise<void> {
+		patchSessionMeta(id, { archived: false, status: "active" });
 	},
 
 	async pin(_bridge: unknown, id: string): Promise<boolean> {

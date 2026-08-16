@@ -250,6 +250,16 @@ export function buildHarnessRouter(bridge: AgentBridge): Hono {
 		}
 	});
 
+	app.post("/sessions/:id/unarchive", async (c) => {
+		const id = c.req.param("id");
+		try {
+			await sessionLifecycle.unarchive(id);
+			return c.json({ ok: true });
+		} catch (err) {
+			return c.json({ error: String(err) }, 500);
+		}
+	});
+
 	app.post("/sessions/:id/pin", async (c) => {
 		const id = c.req.param("id");
 		try {
