@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, FileText, Flame, Star, Zap } from "lucide-react";
 import { Layout } from "@/components/Layout";
+import { AcidTimeline } from "@/components/acid/AcidTimeline";
 import {
 	overviewApi,
 	type OverviewNewsItem,
@@ -196,6 +197,10 @@ export function OverviewView() {
 								</>
 							)}
 						</section>
+
+						{/* Stats strip */}
+						{/* Acid Lab activity timeline — GitHub-changes-in-time-period direction. */}
+						<AcidTimeline events={data?.events ?? []} />
 
 						{/* Stats strip */}
 						<section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

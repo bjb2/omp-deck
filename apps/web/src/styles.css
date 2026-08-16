@@ -733,3 +733,100 @@
 	word-break: break-word;
 	tab-size: 4;
 }
+
+/* ─── Acid Lab theme + utilities ────────────────────────────────────────────
+   Red-team console direction: near-black ground, single acid-chartreuse
+   accent (#d4ff00), saturated semantic trio + a violet "thinking" lane.
+   Same token contract as paper/slate/horizon/aurora — components light up
+   without per-theme branches. The angular cut corners come from the
+   `[data-shape="cut"]` opt-in below. */
+[data-theme="acid"] {
+	color-scheme: dark;
+	--paper: 10 10 10;        /* #0a0a0a */
+	--paper-2: 20 20 20;      /* #141414 */
+	--paper-3: 28 28 28;      /* #1c1c1c */
+	--paper-code: 0 0 0;
+	--ink: 243 243 243;       /* #f3f3f3 */
+	--ink-2: 180 180 180;     /* #b4b4b4 */
+	--ink-3: 110 110 110;     /* #6e6e6e */
+	--ink-4: 60 60 60;
+	--line: 43 43 43;         /* #2b2b2b */
+	--line-strong: 70 70 70;
+	--accent: 212 255 0;      /* #d4ff00 */
+	--accent-2: 212 255 0;
+	--accent-soft: 38 48 0;   /* #263000 */
+	--success: 57 255 20;     /* #39ff14 */
+	--warn: 255 159 28;       /* #ff9f1c */
+	--danger: 255 46 99;      /* #ff2e63 */
+	--thinking: 185 103 255;  /* #b967ff */
+	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Acid Lab hljs re-bind — only kicks in on the acid theme so we don't
+   disturb the other four. Acid-tinted strings, danger deletions. */
+[data-theme="acid"] .hljs-comment,
+[data-theme="acid"] .hljs-quote { color: rgb(var(--ink-3)); }
+[data-theme="acid"] .hljs-keyword,
+[data-theme="acid"] .hljs-selector-tag,
+[data-theme="acid"] .hljs-literal,
+[data-theme="acid"] .hljs-section,
+[data-theme="acid"] .hljs-link { color: rgb(var(--accent)); }
+[data-theme="acid"] .hljs-string,
+[data-theme="acid"] .hljs-attr,
+[data-theme="acid"] .hljs-symbol,
+[data-theme="acid"] .hljs-bullet,
+[data-theme="acid"] .hljs-addition { color: rgb(var(--success)); }
+[data-theme="acid"] .hljs-number,
+[data-theme="acid"] .hljs-meta,
+[data-theme="acid"] .hljs-built_in,
+[data-theme="acid"] .hljs-builtin-name,
+[data-theme="acid"] .hljs-type,
+[data-theme="acid"] .hljs-params { color: rgb(var(--warn)); }
+[data-theme="acid"] .hljs-title,
+[data-theme="acid"] .hljs-function .hljs-title,
+[data-theme="acid"] .hljs-class .hljs-title { color: rgb(var(--accent)); }
+[data-theme="acid"] .hljs-variable,
+[data-theme="acid"] .hljs-template-variable,
+[data-theme="acid"] .hljs-name,
+[data-theme="acid"] .hljs-selector-id,
+[data-theme="acid"] .hljs-selector-class,
+[data-theme="acid"] .hljs-tag { color: rgb(var(--ink)); }
+[data-theme="acid"] .hljs-deletion { color: rgb(var(--danger)); }
+
+/* Acid Lab angular cut-corner primitive. Opt-in via attribute — components
+   that want the cut-corner treatment add `data-shape="cut"`. Default keeps
+   border-radius. Two strengths: subtle (cut) and pronounced (cut-strong). */
+[data-shape="cut"] {
+	clip-path: polygon(0 0, 100% 0, 100% 78%, 93% 100%, 0 100%);
+}
+[data-shape="cut-strong"] {
+	clip-path: polygon(0 0, 100% 0, 100% 70%, 88% 100%, 0 100%);
+}
+.acid-mono { font-family: var(--font-mono); letter-spacing: 0.06em; }
+.acid-label {
+	font-family: var(--font-mono);
+	font-size: 0.6875rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: rgb(var(--ink-3));
+}
+.acid-section {
+	font-family: var(--font-mono);
+	font-size: 0.625rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: rgb(var(--accent));
+}
+.acid-badge {
+	font-family: var(--font-mono);
+	font-size: 0.6875rem;
+	padding: 1px 6px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.acid-badge-success { background: rgb(var(--success)); color: rgb(3 26 1); }
+.acid-badge-warn { background: rgb(var(--warn)); color: rgb(36 18 0); }
+.acid-badge-danger { background: rgb(var(--danger)); color: rgb(42 0 9); }
+.acid-badge-thinking { background: rgb(var(--thinking)); color: rgb(23 10 46); }
+.acid-badge-accent { background: rgb(var(--accent)); color: rgb(19 22 0); }

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
  * reload still lands on the saved theme.
  */
 
-export type ThemeId = "paper" | "slate" | "horizon" | "aurora";
+export type ThemeId = "paper" | "slate" | "horizon" | "aurora" | "acid";
 
 export interface ThemeDefinition {
 	id: ThemeId;
@@ -72,6 +72,19 @@ export const THEMES: ThemeDefinition[] = [
 		metaThemeColor: "#0a0b10",
 		colorScheme: "dark",
 	},
+	{
+		id: "acid",
+		label: "Acid Lab",
+		description: "Red-team console. Near-black ground, acid-chartreuse accent, hairline rules, angular cut corners.",
+		swatchTokens: [
+			{ token: "paper", label: "Page" },
+			{ token: "paper-3", label: "Inset" },
+			{ token: "ink", label: "Ink" },
+			{ token: "accent", label: "Acid" },
+		],
+		metaThemeColor: "#0a0a0a",
+		colorScheme: "dark",
+	},
 ];
 
 export const THEME_IDS = THEMES.map((t) => t.id);
@@ -100,7 +113,7 @@ function readStoredTheme(): ThemeId | undefined {
  * always wins; this only decides what a *first* visit looks like.
  */
 function systemPreferredTheme(): ThemeId {
-	return "aurora";
+	return "acid";
 }
 
 function activeAttribute(): ThemeId {
