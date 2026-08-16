@@ -34,6 +34,8 @@ import type {
 import { broadcastBus } from "../broadcast-bus.ts";
 import { notificationService } from "../notifications/index.ts";
 import { finalizeRun, finishStepRun, insertSkippedStepRun, startStepRun } from "../db/routine-step-runs.ts";
+import { sendToAll } from "../push-service.ts";
+import type { WsHub } from "../ws.ts";
 import { logger } from "../log.ts";
 import { accumulate, checkBudget, newBudgetState } from "./budget.ts";
 import { evaluate } from "./sandbox.ts";
@@ -87,8 +89,9 @@ export async function runV1Pipeline(input: {
 	 * the coding agent as 'briefing material').
 	 */
 	agentSandboxRoot: string;
+	wsHub?: WsHub;
 }): Promise<{ status: "success" | "failed" | "aborted"; abortReason?: AbortReason }> {
-	const { routine, spec, runId, triggerKind, triggerPayload, abortSignal, defaultCwd, agentSandboxRoot } = input;
+	const { routine, spec, runId, triggerKind, triggerPayload, abortSignal, defaultCwd, agentSandboxRoot, wsHub } = input;
 	const startedAt = new Date();
 	const startedAtIso = startedAt.toISOString();
 	const startedMs = Date.now();
@@ -346,6 +349,23 @@ export async function runV1Pipeline(input: {
 		});
 	}
 
+	// Send Web Push notification if the user is not actively at their desk
+	// (no WS activity in the last 30s).
+	if (!wsHub || !wsHub.hasRecentActivity(30_000)) {
+		const suffix = finalStatus === "success" ? "completed" : finalStatus === "failed" ? "failed" : "aborted";
+		const summary = stepCountFailed > 0
+			? `${stepCountFailed}/${stepCountTotal} step(s) failed`
+			: `${stepCountTotal} step(s) ${suffix}`;
+		void sendToAll({
+			title: `${routine.name} ${suffix}`,
+			body: summary,
+			actionUrl: `/routines/${routine.id}/runs/${runId}`,
+			tag: `routine-${routine.id}`,
+		}).catch((err) => {
+			log.debug(`routine completion push failed: ${String(err)}`);
+		});
+	}
+
 	broadcast({
 		type: "routine_run_finished",
 		runId,
@@ -358,6 +378,23 @@ export async function runV1Pipeline(input: {
 
 	return abortReason ? { status: finalStatus, abortReason } : { status: finalStatus };
 }
+
+/**
+ * Fire a Web Push notification when a session proposes a plan, guarded by
+ * WS activity check (suppressed if user active within 30s).
+ */
+export function notifyPlanProposed(sessionId: string, proposalId: string, wsHub?: WsHub): void {
+	if (wsHub?.hasRecentActivity(30_000)) return;
+	void sendToAll({
+		title: "Plan proposed",
+		body: "A new plan requires your approval",
+		actionUrl: `/chat?session=${encodeURIComponent(sessionId)}`,
+		tag: `plan-${proposalId}`,
+	}).catch((err) => {
+		log.debug(`plan_proposed push failed: ${String(err)}`);
+	});
+}
+
 
 async function dispatchStep(
 	step: RoutineStep,

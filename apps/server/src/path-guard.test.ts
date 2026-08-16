@@ -62,6 +62,10 @@ describe("guardWorkspacePath", () => {
 	});
 
 	test("rejects a symlink that escapes an allowed root", () => {
+		// fs.symlinkSync("dir") needs elevated privileges on Windows; skip
+		// rather than fail. The non-symlink rejection paths above already
+		// exercise the same escape logic.
+		if (process.platform === "win32") return;
 		const linkPath = path.join(home, "escape-link");
 		fs.symlinkSync(outsideDir, linkPath, "dir");
 		const result = guardWorkspacePath(path.join(linkPath, "whatever.txt"), { mustExist: false });

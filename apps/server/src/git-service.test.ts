@@ -39,6 +39,7 @@ beforeEach(async () => {
 	await git(repo, ["init", "-q", "-b", "main"]);
 	await git(repo, ["config", "user.email", "test@example.com"]);
 	await git(repo, ["config", "user.name", "Test"]);
+	await git(repo, ["config", "core.autocrlf", "false"]);
 	fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
 	await git(repo, ["add", "."]);
 	await git(repo, ["commit", "-q", "-m", "initial"]);

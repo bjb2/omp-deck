@@ -44,6 +44,7 @@ import {
 	BrowserNotificationChannel,
 	notificationService,
 } from "./notifications/index.ts";
+import { setGholamCompanion } from "./gholam.ts";
 import { WebPushChannel } from "./notifications/channels/web-push.ts";
 import type { RestartServerResponse } from "@omp-deck/protocol";
 import { createHash } from "node:crypto";
@@ -206,6 +207,8 @@ async function main(): Promise<void> {
 	const skillsWatcherDispose = startSkillsWatcher(config);
 	const kbWatcherDispose = startKbWatcher(kbService);
 	const ws = new WsHub(bridge);
+	routinesRunner.setWsHub(ws);
+	setGholamCompanion({ bridge, wsHub: ws });
 
 	server = Bun.serve<ConnectionData>({
 		hostname: config.host,

@@ -348,6 +348,67 @@ export async function checkoutBranch(cwd: string, branch: string, opts: { create
 	await run(repo, args);
 }
 
+// ─── Worktrees ──────────────────────────────────────────────────────────────
+
+export async function createWorktree(cwd: string, branchName: string, worktreePath: string): Promise<void> {
+	const repo = resolveRepo(cwd);
+	await assertRepo(repo);
+	await run(repo, ["worktree", "add", "-b", branchName, worktreePath]);
+}
+
+export async function removeWorktree(cwd: string, worktreePath: string, opts: { force?: boolean } = {}): Promise<void> {
+	const repo = resolveRepo(cwd);
+	await assertRepo(repo);
+	const args = opts.force ? ["worktree", "remove", "--force", worktreePath] : ["worktree", "remove", worktreePath];
+	await run(repo, args);
+}
+
+export interface WorktreeInfo {
+	path: string;
+	branch: string;
+	head: string;
+}
+
+export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
+	const repo = resolveRepo(cwd);
+	await assertRepo(repo);
+	const raw = await run(repo, ["worktree", "list", "--porcelain"]);
+	const blocks = raw.split("\n\n").filter(Boolean);
+	const worktrees: WorktreeInfo[] = [];
+	for (const block of blocks) {
+		let path = "";
+		let head = "";
+		let branch = "";
+		for (const line of block.split("\n")) {
+			if (line.startsWith("worktree ")) {
+				path = line.slice("worktree ".length).trim();
+			} else if (line.startsWith("HEAD ")) {
+				head = line.slice("HEAD ".length).trim();
+			} else if (line.startsWith("branch refs/heads/")) {
+				branch = line.slice("branch refs/heads/".length).trim();
+			}
+		}
+		if (path) {
+			worktrees.push({ path, branch, head });
+		}
+	}
+	return worktrees;
+}
+
+export async function mergeBranch(
+	cwd: string,
+	branchName: string,
+	opts: { noFf?: boolean } = {},
+): Promise<CommitResult> {
+	const repo = resolveRepo(cwd);
+	await assertRepo(repo);
+	const args = opts.noFf ? ["merge", "--no-ff", branchName] : ["merge", branchName];
+	await run(repo, args);
+	const sha = (await run(repo, ["rev-parse", "HEAD"])).trim();
+	const summary = (await run(repo, ["log", "-1", "--format=%s"])).trim();
+	return { sha, summary };
+}
+
 // ─── Remote sync ────────────────────────────────────────────────────────────
 
 export interface SyncResult {

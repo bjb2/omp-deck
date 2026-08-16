@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Play, RotateCcw, Save, Square, X } from "lucide-react";
+import { Check, Copy, Play, QrCode as QrIcon, RotateCcw, Save, Square, X } from "lucide-react";
 import type {
 	BridgeInfo,
 	BridgeName,
@@ -24,6 +24,9 @@ import { settingsApi } from "@/lib/settings-api";
 import { orientationApi } from "@/lib/orientation-api";
 import { authApi } from "@/lib/auth-api";
 import { type AuthError, type AuthStatus, deckAuthApi } from "@/lib/deck-auth-api";
+import { attachApi, type AttachHistoryEntry } from "@/lib/attach-api";
+import { SessionAttachQR } from "@/components/SessionAttachQR";
+import { CopyButton } from "@/lib/CopyButton";
 import { playNotificationTone } from "@/lib/audio";
 import { useNotificationPermission } from "@/lib/notifications";
 import { useInstallPrompt, usePushSubscription } from "@/lib/pwa";
@@ -33,6 +36,7 @@ import { cn } from "@/lib/utils";
 
 const SECTIONS = [
 	{ id: "account", label: "Account", description: "Your sign-in, password and devices" },
+	{ id: "remote-access", label: "Remote Access", description: "How your phone reaches this deck" },
 	{ id: "env", label: "Env", description: "Process and deck-managed variables" },
 	{ id: "providers", label: "Providers", description: "OAuth sign-in and API-key state" },
 	{ id: "messaging", label: "Messaging", description: "Telegram and future chat bridges" },
@@ -87,6 +91,8 @@ export function SettingsView() {
 						<section className="min-h-0 overflow-auto p-4">
 							{selected === "account" ? (
 								<AccountSection />
+							) : selected === "remote-access" ? (
+								<RemoteAccessSection />
 							) : selected === "env" ? (
 								<EnvSection />
 							) : selected === "providers" ? (
@@ -1738,7 +1744,185 @@ function GateKnobInput({
 	);
 }
 
-function StubSection({ section }: { section: Exclude<SectionId, "env" | "messaging" | "appearance" | "notifications"> }) {
+type AccessMode = "direct" | "tunnel" | "history";
+
+function RemoteAccessSection() {
+	const [mode, setMode] = useState<AccessMode>("direct");
+	const [history, setHistory] = useState<AttachHistoryEntry[]>([]);
+	const [historyLoading, setHistoryLoading] = useState(false);
+	const [historyError, setHistoryError] = useState<string | undefined>();
+	const [qrFor, setQrFor] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (mode !== "history") return;
+		setHistoryLoading(true);
+		setHistoryError(undefined);
+		attachApi
+			.getAttachHistory()
+			.then((resp) => setHistory(resp.entries))
+			.catch((e: unknown) => setHistoryError(e instanceof Error ? e.message : String(e)))
+			.finally(() => setHistoryLoading(false));
+	}, [mode]);
+
+	const cloudflaredCmd = "cloudflared tunnel --url http://localhost:3000";
+
+	return (
+		<div className="mx-auto max-w-3xl space-y-4">
+			<div>
+				<h1 className="text-xl font-semibold tracking-tight">Remote Access</h1>
+				<p className="mt-1 max-w-3xl text-sm text-ink-3">
+					Pick how your phone reaches this deck. Switch modes any time; settings are saved per
+					device.
+				</p>
+			</div>
+
+			<div className="grid gap-3">
+				<AccessModeCard
+					id="direct"
+					mode={mode}
+					setMode={setMode}
+					title="Direct (loopback + Tailscale)"
+					description="Connect directly via your local IP or Tailscale domain. No public exposure; fastest and safest when both devices are on the same network or Tailscale tailnet."
+					default
+				/>
+				<AccessModeCard
+					id="tunnel"
+					mode={mode}
+					setMode={setMode}
+					title="Cloudflare Tunnel"
+					description="Run cloudflared on the host machine. The deck stays unexposed; Cloudflare handles TLS and routing."
+					footer={
+						<div className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-2 py-1.5">
+							<code className="flex-1 truncate font-mono text-xs">{cloudflaredCmd}</code>
+							<CopyButton text={cloudflaredCmd} />
+						</div>
+					}
+				/>
+				<AccessModeCard
+					id="history"
+					mode={mode}
+					setMode={setMode}
+					title="Join Links History"
+					description="Recent attach URLs you've minted. Scan a QR from a previous session to rejoin quickly."
+					footer={
+						<JoinLinksHistory
+							entries={history}
+							loading={historyLoading}
+							error={historyError}
+							onOpenQr={(sessionId) => setQrFor(sessionId)}
+						/>
+					}
+				/>
+			</div>
+
+			{qrFor ? (
+				<SessionAttachQR
+					sessionId={qrFor}
+					open={true}
+					onClose={() => setQrFor(null)}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+function AccessModeCard({
+	id,
+	mode,
+	setMode,
+	title,
+	description,
+	footer,
+	default: isDefault,
+}: {
+	id: AccessMode;
+	mode: AccessMode;
+	setMode: (m: AccessMode) => void;
+	title: string;
+	description: string;
+	footer?: ReactNode;
+	default?: boolean;
+}) {
+	const selected = mode === id;
+	return (
+		<label
+			className={cn(
+				"block cursor-pointer rounded-md border bg-paper-2 p-3 transition-colors",
+				selected ? "border-accent ring-1 ring-accent/30" : "border-line hover:border-ink-3",
+			)}
+		>
+			<div className="flex items-start gap-3">
+				<input
+					type="radio"
+					name="access-mode"
+					value={id}
+					checked={selected}
+					onChange={() => setMode(id)}
+					className="mt-1 h-3.5 w-3.5 accent-accent"
+				/>
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-2">
+						<div className="font-mono text-xs font-medium uppercase tracking-meta">
+							{title}
+						</div>
+						{isDefault ? <Badge tone="accent">default</Badge> : null}
+					</div>
+					<p className="mt-1 text-sm text-ink-3">{description}</p>
+					{footer && selected ? <div className="mt-3">{footer}</div> : null}
+				</div>
+			</div>
+		</label>
+	);
+}
+
+function JoinLinksHistory({
+	entries,
+	loading,
+	error,
+	onOpenQr,
+}: {
+	entries: AttachHistoryEntry[];
+	loading: boolean;
+	error: string | undefined;
+	onOpenQr: (sessionId: string) => void;
+}) {
+	if (loading) return <div className="text-sm text-ink-3">Loading history...</div>;
+	if (error) {
+		return (
+			<div className="rounded-md border border-danger/30 bg-danger/10 px-2 py-1.5 font-mono text-2xs text-danger">
+				{error}
+			</div>
+		);
+	}
+	if (entries.length === 0) {
+		return (
+			<div className="rounded-md border border-dashed border-line bg-paper-2 px-2 py-1.5 text-xs text-ink-3">
+				No join links yet. Mint one from a running session to see it here.
+			</div>
+		);
+	}
+	return (
+		<ul className="divide-y divide-line rounded-md border border-line bg-paper-2">
+			{entries.map((entry) => (
+				<li key={entry.token} className="flex items-center gap-2 px-2 py-1.5">
+					<div className="min-w-0 flex-1">
+						<div className="truncate font-mono text-xs">{entry.url}</div>
+						<div className="text-2xs text-ink-3">
+							{new Date(entry.createdAt).toLocaleString()} · {entry.sessionId.slice(0, 8)}
+						</div>
+					</div>
+					<CopyButton text={entry.url} />
+					<Button variant="outline" size="sm" onClick={() => onOpenQr(entry.sessionId)}>
+						<QrIcon className="h-3.5 w-3.5" />
+						QR
+					</Button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function StubSection({ section }: { section: Exclude<SectionId, "env" | "messaging" | "appearance" | "notifications" | "remote-access"> }) {
 	const spec = SECTIONS.find((s) => s.id === section)!;
 	return (
 		<div className="mx-auto max-w-3xl rounded-md border border-dashed border-line bg-paper-2 p-6">

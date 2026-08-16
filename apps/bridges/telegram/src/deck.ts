@@ -9,14 +9,14 @@ export class SessionNotActiveError extends Error {
 export class DeckClient {
 	constructor(
 		private readonly apiBase: string,
-		private readonly wsUrl: string,
+		readonly wsUrl: string,
 		/**
 		 * Deck API token. The bridge is a separate process with no browser and no
 		 * cookie jar, so once the deck requires authentication this bearer token is
 		 * the only way in. It is injected into the bridge's environment by the
 		 * supervisor, which reads it from the same place the server generated it.
 		 */
-		private readonly apiToken?: string,
+		readonly apiToken?: string,
 	) {}
 
 	/** Headers every deck call carries: JSON plus the bearer token when present. */
@@ -45,6 +45,51 @@ export class DeckClient {
 		});
 		if (res.status === 404) return;
 		if (!res.ok) throw new Error(`deck delete session failed: ${res.status}`);
+	}
+
+	/**
+	 * Reply to a `plan_proposed` frame. Opens a short-lived WS, sends the
+	 * `plan_response` frame, and resolves once the server has taken it
+	 * (or the socket closes). The server handles the actual rename +
+	 * synthetic prompt injection; the bridge just needs to deliver intent.
+	 */
+	respondToPlanApproval(sessionId: string, proposalId: string, approved: boolean): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const ws = new WebSocket(
+				this.wsUrl,
+				this.apiToken ? { headers: { authorization: `Bearer ${this.apiToken}` } } : undefined,
+			);
+			let settled = false;
+			const finish = (err?: Error) => {
+				if (settled) return;
+				settled = true;
+				try {
+					ws.close();
+				} catch {
+					// already closed
+				}
+				if (err) reject(err);
+				else resolve();
+			};
+			ws.onerror = () => finish(new Error("deck websocket failed for plan_response"));
+			ws.onclose = () => {
+				if (!settled) finish(new Error("deck websocket closed before plan_response ack"));
+			};
+			ws.onopen = () => {
+				ws.send(
+					JSON.stringify({
+						type: "plan_response",
+						sessionId,
+						proposalId,
+						approved,
+					}),
+				);
+				// The server doesn't emit a dedicated ack for plan_response; the
+				// server-side pipeline resolves through plan_proposal_resolved.
+				// A short delay is enough to let the frame flush, then close.
+				setTimeout(() => finish(), 100);
+			};
+		});
 	}
 
 	promptSession(args: {

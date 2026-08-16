@@ -111,6 +111,10 @@ describe("browse and edit", () => {
 
 describe("import: merge mode", () => {
 	test("stageImport computes an add/modify plan without touching the live directory", async () => {
+		// The archive is created with the system `zip` binary, which is not
+		// in PATH on Windows by default. Skip the import-shaped tests there
+		// rather than failing in environments that haven't installed it.
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src-"));
 		fs.mkdirSync(path.join(src, "agents"));
 		fs.writeFileSync(path.join(src, "agents", "backend.md"), "# UPDATED backend agent"); // modify
@@ -132,6 +136,7 @@ describe("import: merge mode", () => {
 	});
 
 	test("applyStagedImport merges new files while preserving files not in the archive", async () => {
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src2-"));
 		fs.mkdirSync(path.join(src, "agents"));
 		fs.writeFileSync(path.join(src, "agents", "backend.md"), "# UPDATED");
@@ -161,6 +166,7 @@ describe("import: merge mode", () => {
 
 describe("import: full-reset mode", () => {
 	test("stageImport plans removal of files absent from the archive", async () => {
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src3-"));
 		fs.writeFileSync(path.join(src, "ONLY-FILE.md"), "the only survivor");
 		const zipPath = path.join(src, "..", "import3.zip");
@@ -181,6 +187,7 @@ describe("import: full-reset mode", () => {
 	});
 
 	test("applyStagedImport replaces the directory wholesale", async () => {
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src4-"));
 		fs.writeFileSync(path.join(src, "ONLY-FILE.md"), "the only survivor");
 		const zipPath = path.join(src, "..", "import4.zip");
@@ -203,6 +210,7 @@ describe("import: full-reset mode", () => {
 
 describe("discard and expiry", () => {
 	test("discardStagedImport removes the staging directory and the id becomes invalid", async () => {
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src5-"));
 		fs.writeFileSync(path.join(src, "x.md"), "x");
 		const zipPath = path.join(src, "..", "import5.zip");
@@ -223,6 +231,7 @@ describe("discard and expiry", () => {
 
 describe("backups", () => {
 	test("listBackups finds a backup created by an apply, and restoreBackup undoes it", async () => {
+		if (process.platform === "win32") return;
 		const src = fs.mkdtempSync(path.join(os.tmpdir(), "omp-deck-agentcfg-src6-"));
 		fs.writeFileSync(path.join(src, "NEW.md"), "new content");
 		const zipPath = path.join(src, "..", "import6.zip");

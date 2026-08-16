@@ -10,9 +10,12 @@
  */
 import * as path from "node:path";
 
+import { promises as fs } from "node:fs";
+
 import { Hono } from "hono";
 
 import type { Task, TaskState } from "@omp-deck/protocol";
+import type { Context } from "hono";
 
 import type { Config } from "./config.ts";
 import { logger } from "./log.ts";
@@ -30,6 +33,9 @@ const WINDOW_DAYS: Readonly<Record<Window, number>> = { "24h": 1, "7d": 7, "30d"
 const ACTIVE_TASK_LIMIT = 5;
 const EVENT_LIMIT = 20;
 const STREAK_LOOKBACK_DAYS = 90;
+const SHARP_HOURS_WINDOW_DAYS = 30;
+const SHARP_HOURS_MIN_COUNT = 3;
+const RECEIPTS_DIR = "sessions";
 
 const DONE_STATE_ALIAS: ReadonlySet<string> = new Set([
 	"s_done",
@@ -98,7 +104,26 @@ export interface OverviewResponse {
 	news: OverviewNewsItem[];
 	trending: OverviewRepo[];
 	events: OverviewEvent[];
+	receiptsTodayCount: number;
+	sharpHours: OverviewSharpHour[];
+	costByDay: CostByDayPoint[];
 	stale?: boolean;
+}
+
+export interface OverviewSharpHour {
+	hour: number;
+	count: number;
+}
+
+export interface ReceiptEntry {
+	filename: string;
+	sessionId: string;
+	goal: string;
+	createdAt: string;
+}
+
+export interface ReceiptsResponse {
+	receipts: ReceiptEntry[];
 }
 
 export interface SkillsListProvider {
@@ -114,6 +139,7 @@ interface OverviewInputs {
 	window: Window;
 	refresh: boolean;
 	news: NewsService;
+	config: Config;
 	skills?: SkillsListProvider;
 	allTasks: Task[];
 	allStates: TaskState[];
@@ -128,6 +154,20 @@ export function buildRoutesOverview(opts: BuildOpts): Hono {
 	const windowFromQuery = (raw: string | undefined): Window =>
 		raw === "24h" || raw === "30d" ? raw : "7d";
 
+	const handleReceipts = async (c: Context) => {
+		try {
+			const date = c.req.query("date") ?? todayLocalDate();
+			const body = await listReceipts({ dataDir, date });
+			return c.json(body);
+		} catch (err) {
+			log.error("receipts list failed", err);
+			return c.json({ error: String(err) }, 500);
+		}
+	};
+
+	app.get("/receipts", handleReceipts);
+	app.get("/api/receipts", handleReceipts);
+
 	app.get("/overview", async (c) => {
 		const window = windowFromQuery(c.req.query("window"));
 		const refresh = c.req.query("refresh") === "1";
@@ -137,6 +177,7 @@ export function buildRoutesOverview(opts: BuildOpts): Hono {
 					window,
 					refresh,
 					news,
+					config: opts.config,
 					skills: opts.skills,
 					allTasks: listTasks(),
 					allStates: listStates(),
@@ -195,6 +236,11 @@ async function buildOverview({ inputs }: { inputs: OverviewInputs }): Promise<Ov
 		inputs.news.getNews({ refresh: inputs.refresh }),
 		inputs.news.getTrending({ refresh: inputs.refresh }),
 	]);
+	const [receiptsToday] = await Promise.all([
+		listReceipts({ dataDir: path.dirname(inputs.config.dbPath), date: todayLocalDate() }),
+	]);
+	const sharpHours = computeSharpHours({ doneStateIds, tasks: inputs.allTasks });
+	const costByDay = buildCostByDay();
 
 	const stale = newsResult.stale || trendingResult.stale;
 	const out: OverviewResponse = {
@@ -205,6 +251,9 @@ async function buildOverview({ inputs }: { inputs: OverviewInputs }): Promise<Ov
 		news: newsResult.items,
 		trending: trendingResult.items,
 		events,
+		receiptsTodayCount: receiptsToday.receipts.length,
+		sharpHours,
+		costByDay,
 	};
 	if (stale) out.stale = true;
 	return out;
@@ -357,4 +406,149 @@ function dayKey(ms: number): string {
 	const m = `${d.getUTCMonth() + 1}`.padStart(2, "0");
 	const day = `${d.getUTCDate()}`.padStart(2, "0");
 	return `${y}-${m}-${day}`;
+}
+
+function todayLocalDate(): string {
+	const d = new Date();
+	const y = d.getFullYear();
+	const m = `${d.getMonth() + 1}`.padStart(2, "0");
+	const day = `${d.getDate()}`.padStart(2, "0");
+	return `${y}-${m}-${day}`;
+}
+
+interface SharpHourRow {
+	hour: string | null;
+	count: number;
+}
+
+export interface CostByDayPoint {
+	date: string;
+	costMicrocents: number;
+}
+
+interface CostByDayRow {
+	date: string;
+	costMicrocents: number;
+}
+
+const COST_BY_DAY_LOOKBACK_DAYS = 30;
+
+function buildCostByDay(): CostByDayPoint[] {
+	const sinceUtc = new Date(Date.now() - COST_BY_DAY_LOOKBACK_DAYS * 24 * 60 * 60_000);
+	const sinceIso = sinceUtc.toISOString();
+	const rows = getDb()
+		.query<CostByDayRow, [string, string]>(
+			`SELECT date, SUM(cost_microcents) AS costMicrocents FROM (
+			        SELECT strftime('%Y-%m-%d', created_at) AS date,
+			               COALESCE(json_extract(usage_json, '$.costMicrocents'), 0) AS cost_microcents
+			          FROM gholam_chats
+			         WHERE created_at >= ?
+			           AND json_extract(usage_json, '$.costMicrocents') IS NOT NULL
+			        UNION ALL
+			        SELECT strftime('%Y-%m-%d', started_at) AS date,
+			               COALESCE(total_llm_cost_micros, 0) AS cost_microcents
+			          FROM routine_runs
+			         WHERE started_at >= ?
+			           AND total_llm_cost_micros IS NOT NULL
+			       )
+			 GROUP BY date
+			 ORDER BY date ASC`,
+		)
+		.all(sinceIso, sinceIso) as CostByDayRow[];
+	const byDate = new Map(rows.map((r) => [r.date, r.costMicrocents]));
+	const points: CostByDayPoint[] = [];
+	const today = new Date();
+	for (let i = COST_BY_DAY_LOOKBACK_DAYS - 1; i >= 0; i--) {
+		const d = new Date(today.getTime() - i * 24 * 60 * 60_000);
+		const date = dayKey(d.getTime());
+		points.push({ date, costMicrocents: byDate.get(date) ?? 0 });
+	}
+	return points;
+}
+/**
+ * Bucket tasks that crossed into a "done" state within the last 30 days
+ * (using `state_entered_at`) by the hour-of-day they finished. Only hours
+ * that crossed the threshold (`SHARP_HOURS_MIN_COUNT`) make the cut — the
+ * leaderboard is meant to surface where the user's focus has actually
+ * landed, not every partial hour.
+ */
+function computeSharpHours(input: {
+	doneStateIds: Set<string>;
+	tasks: Task[];
+}): OverviewSharpHour[] {
+	if (input.doneStateIds.size === 0) return [];
+	const sinceMs = Date.now() - SHARP_HOURS_WINDOW_DAYS * 24 * 60 * 60_000;
+	const sinceIso = new Date(sinceMs).toISOString();
+	const ids = [...input.doneStateIds];
+	const placeholders = ids.map(() => "?").join(",");
+	const rows = getDb()
+		.query<SharpHourRow, string[]>(
+			`SELECT CAST(strftime('%H', state_entered_at) AS TEXT) AS hour,
+			        COUNT(*) AS count
+			 FROM tasks
+			 WHERE state_id IN (${placeholders})
+			   AND energy_tag IS NOT NULL
+			   AND state_entered_at >= ?
+			 GROUP BY hour
+			 ORDER BY hour ASC`,
+		)
+		.all(...ids, sinceIso) as SharpHourRow[];
+	return rows
+		.map((r) => ({ hour: Number.parseInt(r.hour ?? "", 10), count: r.count }))
+		.filter((r) => Number.isInteger(r.hour) && r.hour >= 0 && r.hour <= 23)
+		.filter((r) => r.count >= SHARP_HOURS_MIN_COUNT);
+}
+
+async function listReceipts(input: {
+	dataDir: string;
+	date: string;
+}): Promise<ReceiptsResponse> {
+	const dir = path.join(input.dataDir, RECEIPTS_DIR);
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { receipts: [] };
+		throw err;
+	}
+	const prefix = `${input.date}-`;
+	const matches = entries.filter((name) => name.startsWith(prefix) && name.endsWith(".md"));
+	const receipts: ReceiptEntry[] = [];
+	for (const filename of matches) {
+		const sessionId = filename.slice(prefix.length, -".md".length).replace(/^\d{4}-/, "");
+		const filePath = path.join(dir, filename);
+		const goal = await readGoalFromReceipt(filePath);
+		const createdAt = await receiptCreatedAt(filePath);
+		receipts.push({ filename, sessionId, goal, createdAt });
+	}
+	receipts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	return { receipts };
+}
+
+async function readGoalFromReceipt(filePath: string): Promise<string> {
+	let raw: string;
+	try {
+		raw = await fs.readFile(filePath, "utf-8");
+	} catch {
+		return "";
+	}
+	const lines = raw.split(/\r?\n/);
+	const idx = lines.findIndex((l) => l.trim() === "# Goal");
+	if (idx < 0) return "";
+	const collected: string[] = [];
+	for (let i = idx + 1; i < lines.length; i++) {
+		const line = lines[i] ?? "";
+		if (/^#\s/.test(line)) break;
+		collected.push(line);
+	}
+	return collected.join("\n").trim();
+}
+
+async function receiptCreatedAt(filePath: string): Promise<string> {
+	try {
+		const stat = await fs.stat(filePath);
+		return stat.mtime.toISOString();
+	} catch {
+		return new Date(0).toISOString();
+	}
 }

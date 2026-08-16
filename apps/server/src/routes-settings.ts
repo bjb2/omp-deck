@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import * as os from "node:os";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
 	EnvEntry,
@@ -90,6 +91,35 @@ export function buildSettingsRouter(
 		if (!isLoopbackRequest(c.req.raw)) return c.json({ error: "restart requires loopback" }, 403);
 		const resp = opts.restartServer?.() ?? { ok: false, message: "Restart is unavailable" };
 		return c.json(resp);
+	});
+
+	app.post("/settings/install-focus-guard", async (c) => {
+		let body: { cwd?: string };
+		try {
+			body = (await c.req.json()) as { cwd?: string };
+		} catch {
+			return c.json({ ok: false, path: "" }, 400);
+		}
+		const cwd = body.cwd?.trim();
+		if (!cwd) {
+			return c.json({ ok: false, path: "" }, 400);
+		}
+		try {
+			const hookDir = path.join(cwd, ".git", "hooks");
+			fs.mkdirSync(hookDir, { recursive: true });
+			const hookPath = path.join(hookDir, "pre-commit");
+			const script = `#!/bin/sh
+# OMP Deck Focus Guard pre-commit hook
+if [ -f "$HOME/.omp/focus_active" ]; then
+  echo "[focus-guard] Focus mode active. Commit blocked."
+  exit 1
+fi
+exit 0\n`;
+			fs.writeFileSync(hookPath, script, { mode: 0o755 });
+			return c.json({ ok: true, path: hookPath });
+		} catch {
+			return c.json({ ok: false, path: "" }, 500);
+		}
 	});
 
 	return app;

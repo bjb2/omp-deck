@@ -24,9 +24,22 @@ beforeEach(() => {
 
 afterEach(() => {
 	closeDb();
-	if (savedDataDir === undefined) delete process.env.OMP_DECK_DATA_DIR;
-	else process.env.OMP_DECK_DATA_DIR = savedDataDir;
-	fs.rmSync(dir, { recursive: true, force: true });
+	// ponytail: Windows can hold the sqlite file handle open for several
+	// seconds after close (VAPID key write races Defender's indexer hard).
+	// Defer the rm so it never blocks the next test. The test dir is in
+	// %TEMP% — leftovers get swept by the OS at next reboot.
+	const doomed = dir;
+	setTimeout(() => {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			try {
+				fs.rmSync(doomed, { recursive: true, force: true });
+				return;
+			} catch {
+				// Try again after a beat. Don't throw — this is best-effort
+				// teardown for a tempdir we created a moment ago.
+			}
+		}
+	}, 50);
 });
 
 describe("VAPID keys", () => {

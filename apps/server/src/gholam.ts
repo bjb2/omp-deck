@@ -20,6 +20,10 @@ import { randomUUID } from "node:crypto";
 
 import { currentGholamToken, revokeGholamToken } from "./gholam-token.ts";
 import { logger } from "./log.ts";
+import { broadcastBus } from "./broadcast-bus.ts";
+import { gholamDeckLLM } from "./llm-registry.ts";
+import type { AgentBridge } from "./bridge/types.ts";
+import type { WsHub } from "./ws.ts";
 
 const log = logger("gholam");
 
@@ -160,6 +164,140 @@ const state: GholamInternalState = {
 
 let sidecarProc: { kill: () => void } | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+// ─── Companion runtime (set once by index.ts once the bridge + WsHub exist) ──
+// The poll loop lives in the server process so it can talk to the bridge
+// and broadcast bus directly. The sidecar is still the heartbeat owner;
+// this stays a server-side companion.
+let companionBridge: AgentBridge | undefined;
+let companionWsHub: WsHub | undefined;
+let idlePollTimer: ReturnType<typeof setInterval> | undefined;
+/** Rolling 60s window of classification start-times (ms). Caps the global
+ *  rate at 10/min regardless of how many idle sessions we discover. */
+const classifyCalls: number[] = [];
+const IDLE_THRESHOLD_MS = 5 * 60_000;
+const IDLE_POLL_INTERVAL_MS = 60_000;
+const CLASSIFY_WINDOW_MS = 60_000;
+const CLASSIFY_MAX_PER_WINDOW = 10;
+const CLASSIFY_MODEL = process.env.OMP_DECK_COMPANION_MODEL ?? "minimax/MiniMax-M3";
+const TRANSCRIPT_LINES = 20;
+
+/** Wire the bridge + WsHub so the idle-classification poll has somewhere to
+ *  read session state and broadcast frames. Idempotent; safe to call once
+ *  during server startup. */
+export function setGholamCompanion(deps: { bridge: AgentBridge; wsHub: WsHub }): void {
+	companionBridge = deps.bridge;
+	companionWsHub = deps.wsHub;
+	startIdlePoll();
+}
+
+function startIdlePoll(): void {
+	if (idlePollTimer) return;
+	idlePollTimer = setInterval(() => {
+		void classifyIdleSessions();
+	}, IDLE_POLL_INTERVAL_MS);
+	(idlePollTimer as unknown as { unref?: () => void }).unref?.();
+}
+
+function stopIdlePoll(): void {
+	if (idlePollTimer) {
+		clearInterval(idlePollTimer);
+		idlePollTimer = undefined;
+	}
+}
+
+function pruneClassifyWindow(now: number): void {
+	const cutoff = now - CLASSIFY_WINDOW_MS;
+	while (classifyCalls.length > 0 && classifyCalls[0]! < cutoff) classifyCalls.shift();
+}
+
+function classifyBudgetAvailable(now: number): boolean {
+	pruneClassifyWindow(now);
+	return classifyCalls.length < CLASSIFY_MAX_PER_WINDOW;
+}
+
+async function readLastTranscriptLines(path: string | undefined, n: number): Promise<string[]> {
+	if (!path) return [];
+	try {
+		const text = await fs.readFile(path, "utf-8");
+		const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
+		return lines.slice(-n);
+	} catch {
+		return [];
+	}
+}
+
+type Hint = "working" | "needs_input" | "error" | "done" | "idle";
+const VALID_HINTS: ReadonlySet<Hint> = new Set<Hint>(["working", "needs_input", "error", "done", "idle"]);
+
+/** Pull the first non-whitespace token from the model's response and map it
+ *  to a known hint. Falls back to `idle` when the output is garbage so the
+ *  UI never sees an unknown value. */
+function parseHint(text: string): Hint {
+	const token = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
+	return VALID_HINTS.has(token as Hint) ? (token as Hint) : "idle";
+}
+
+async function classifyOne(sessionId: string, sessionFile: string | undefined): Promise<void> {
+	const lines = await readLastTranscriptLines(sessionFile, TRANSCRIPT_LINES);
+	const transcript = lines.length > 0 ? lines.join("\n") : "(no transcript available)";
+	let text = "";
+	try {
+		for await (const chunk of gholamDeckLLM.complete({
+			model: CLASSIFY_MODEL,
+			messages: [
+				{
+					role: "system",
+					content: "Classify the agent's current state from the recent transcript. Answer with exactly one word: working, needs_input, error, done, or idle.",
+				},
+				{ role: "user", content: transcript },
+			],
+		})) {
+			if (chunk.type === "text") text += chunk.delta;
+			else if (chunk.type === "error") {
+				log.warn(`classify ${sessionId} LLM error: ${chunk.error}`);
+				return;
+			}
+		}
+	} catch (err) {
+		log.warn(`classify ${sessionId} failed`, err);
+		return;
+	}
+	const hint = parseHint(text);
+	broadcastBus.broadcast({ type: "session_status_hint", sessionId, hint });
+}
+
+async function classifyIdleSessions(): Promise<void> {
+	if (!companionBridge) return;
+	let idle: { sessionId: string; lastActivityAt: number }[];
+	try {
+		idle = await companionBridge.listIdleSessions(IDLE_THRESHOLD_MS);
+	} catch (err) {
+		log.warn(`listIdleSessions failed`, err);
+		return;
+	}
+	if (idle.length === 0) return;
+	// Skip work entirely while the user is actively at their desk — the
+	// push-notification gate applies to classification too: a hint is only
+	// useful when the user is away.
+	if (companionWsHub?.hasRecentActivity(30_000)) return;
+	const now = Date.now();
+	for (const { sessionId, lastActivityAt } of idle) {
+		// Re-check the threshold: a session may have become active between
+		// the snapshot and the loop reaching it.
+		if (Date.now() - lastActivityAt < IDLE_THRESHOLD_MS) continue;
+		if (!classifyBudgetAvailable(now)) {
+			log.debug(`classify budget exhausted (${classifyCalls.length}/${CLASSIFY_MAX_PER_WINDOW} in last ${CLASSIFY_WINDOW_MS}ms)`);
+			return;
+		}
+		classifyCalls.push(Date.now());
+		const handle = companionBridge.getSession(sessionId);
+		try {
+			await classifyOne(sessionId, handle?.sessionFile);
+		} catch (err) {
+			log.warn(`classify ${sessionId} threw`, err);
+		}
+	}
+}
 
 async function readPriorities(): Promise<GholamPriority[]> {
 	try {

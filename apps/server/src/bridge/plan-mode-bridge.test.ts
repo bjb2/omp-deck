@@ -267,7 +267,7 @@ describe("PlanModeBridge", () => {
 		await expect(handler({ action: "apply", reason: "ready" })).rejects.toThrow(/Plan file not found/i);
 	});
 
-	it("approve happy path: broadcasts proposal, renames, restores tools, queues followUp", async () => {
+	it("approve happy path: broadcasts proposal, no longer renames (v17), restores tools, queues followUp", async () => {
 		await harness.bridge.enter();
 		await fs.writeFile(harness.planFile, "# My feature\n\nDo a thing.\n");
 
@@ -302,9 +302,7 @@ describe("PlanModeBridge", () => {
 		expect(result.details.sourceResultDetails?.finalPlanFilePath).toBe("local://My-feature.md");
 		expect(result.details.sourceResultDetails?.planExists).toBe(true);
 
-		// File renamed on disk.
-		await expect(fs.access(path.join(harness.dir, "local", "My-feature.md"))).resolves.toBeNull();
-		await expect(fs.access(harness.planFile)).rejects.toThrow();
+		// v17 dropped the rename step; PLAN.md stays at local://PLAN.md.
 
 		// Tools restored.
 		const lastSet = harness.session.setActiveToolsCalls.at(-1);
@@ -342,7 +340,7 @@ describe("PlanModeBridge", () => {
 		expect(harness.frames.length).toBeGreaterThan(initialFrameCount);
 	});
 
-	it("approve with edited content writes back before rename", async () => {
+	it("approve with edited content writes back to PLAN.md", async () => {
 		await harness.bridge.enter();
 		await fs.writeFile(harness.planFile, "# Orig\n");
 
@@ -358,8 +356,8 @@ describe("PlanModeBridge", () => {
 		});
 		await resultPromise;
 
-		const renamed = await fs.readFile(path.join(harness.dir, "local", "Edited-plan.md"), "utf-8");
-		expect(renamed).toBe("# Replaced\n\nNew body.\n");
+		const written = await fs.readFile(harness.planFile, "utf-8");
+		expect(written).toBe("# Replaced\n\nNew body.\n");
 		expect(harness.session.promptCalls[0]!.text).toMatch(/New body\./);
 	});
 
@@ -377,7 +375,6 @@ describe("PlanModeBridge", () => {
 		});
 		const result = await resultPromise;
 		expect(result.details.sourceResultDetails?.finalPlanFilePath).toBe("local://custom_name.md");
-		await expect(fs.access(path.join(harness.dir, "local", "custom_name.md"))).resolves.toBeNull();
 	});
 
 	it("approve falls back to suggested path when finalPath fails sanitization", async () => {
@@ -394,7 +391,7 @@ describe("PlanModeBridge", () => {
 			finalPath: "local://../escape.md",
 		});
 		const result = await resultPromise;
-		expect(result.details.sourceResultDetails?.finalPlanFilePath).toBe("local://fallback-case.md");
+		expect(result.details.sourceResultDetails?.finalPlanFilePath).toBe("local://Yo.md");
 	});
 
 	it("reject path exits plan mode, broadcasts rejected resolution, and surfaces a rejection result", async () => {

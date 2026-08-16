@@ -49,6 +49,24 @@ export class TelegramBridgeStore {
 		return row ? fromRow(row) : undefined;
 	}
 
+	findBySessionId(sessionId: string): ChatSessionMapping | undefined {
+		const row = this.db
+			.query<MappingRow, [string]>(
+				"SELECT chat_id, session_id, session_file, cwd, created_at, updated_at FROM telegram_chat_sessions WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1",
+			)
+			.get(sessionId);
+		return row ? fromRow(row) : undefined;
+	}
+
+	all(): ChatSessionMapping[] {
+		const rows = this.db
+			.query<MappingRow, []>(
+				"SELECT chat_id, session_id, session_file, cwd, created_at, updated_at FROM telegram_chat_sessions",
+			)
+			.all();
+		return rows.map(fromRow);
+	}
+
 	upsert(mapping: ChatSessionMapping): void {
 		this.db
 			.prepare<unknown, [string, string, string | null, string, string, string]>(

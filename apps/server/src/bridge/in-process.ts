@@ -249,6 +249,16 @@ export class InProcessAgentBridge implements AgentBridge {
 		a.lastActivityAt = Date.now();
 	}
 
+	async listIdleSessions(idleMs: number): Promise<{ sessionId: string; lastActivityAt: number }[]> {
+		const cutoff = Date.now() - idleMs;
+		const out: { sessionId: string; lastActivityAt: number }[] = [];
+		for (const [sessionId, a] of this.active) {
+			if (a.lastActivityAt >= cutoff) continue;
+			out.push({ sessionId, lastActivityAt: a.lastActivityAt });
+		}
+		return out;
+	}
+
 	applyEnvUpdate(update: RuntimeEnvUpdate): void {
 		if (update.autoStartCommand !== undefined) {
 			this.autoStartCommand = update.autoStartCommand;

@@ -203,6 +203,18 @@ export class WsHub {
 		}
 	}
 
+	/** Has any client received a throttled frame in the last `withinMs`?
+	 *  Used by background work (routines) to suppress push notifications
+	 *  when the user is at their desk — they're already seeing the live
+	 *  WS feed. */
+	hasRecentActivity(withinMs: number): boolean {
+		const cutoff = Date.now() - withinMs;
+		for (const last of this.lastSentByType.values()) {
+			if (last >= cutoff) return true;
+		}
+		return false;
+	}
+
 	// ───────────────────────────────────────────────────────────────────────
 
 	private async handleSubscribe(ws: ServerWebSocket<ConnectionData>, sessionId: string): Promise<void> {

@@ -55,6 +55,13 @@ export interface OverviewEvent {
 	href?: string;
 }
 
+export interface ReceiptEntry {
+	filename: string;
+	sessionId: string;
+	goal: string;
+	createdAt: string;
+}
+
 export interface OverviewResponse {
 	generatedAt: string;
 	window: OverviewWindow;
@@ -63,6 +70,10 @@ export interface OverviewResponse {
 	news: OverviewNewsItem[];
 	trending: OverviewRepo[];
 	events: OverviewEvent[];
+	receiptsTodayCount?: number;
+	sharpHours?: Array<{ hour: number; count: number }>;
+	/** Daily spend totals in USD microcents, oldest first. Trailing window may be < 30 days when fresh. */
+	costByDay?: Array<{ date: string; costMicrocents: number }>;
 	stale?: boolean;
 }
 
@@ -103,5 +114,9 @@ export const overviewApi = {
 		return safe({ items: [], stale: true }, () =>
 			req<{ items: OverviewNewsItem[]; stale?: boolean }>(`/overview/news${refresh ? "?refresh=1" : ""}`),
 		);
+	},
+	receipts(date?: string): Promise<{ receipts: ReceiptEntry[] }> {
+		const url = date ? `/receipts?date=${encodeURIComponent(date)}` : "/receipts";
+		return safe({ receipts: [] }, () => req<{ receipts: ReceiptEntry[] }>(url));
 	},
 };

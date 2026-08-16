@@ -29,6 +29,14 @@ export interface AgentBridge {
 	trackSubscriberRemoved(sessionId: string, connectionId: string): void;
 	/** Bump last-activity-ts; called for explicit user actions outside subscribe. */
 	bumpActivity(sessionId: string): void;
+	/**
+	 * Snapshot of sessions whose `lastActivityAt` is older than `idleMs`
+	 * ago. Used by the deck's companion runtime to fan out a status hint
+	 * over the WS bus. Implementations should expose the most-recent
+	 * `lastActivityAt` they hold (NOT a fresh timestamp) so the caller
+	 * can decide whether to re-classify a session that just turned idle.
+	 */
+	listIdleSessions(idleMs: number): Promise<{ sessionId: string; lastActivityAt: number }[]>;
 	/** Hot-apply runtime env values that do not require process restart. */
 	applyEnvUpdate?(update: RuntimeEnvUpdate): void;
 	/** Catalog of models the SDK knows about, plus a marker on the current one when sessionId is given. */

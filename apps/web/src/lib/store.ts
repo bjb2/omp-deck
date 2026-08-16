@@ -297,6 +297,15 @@ interface StoreState {
 	setModelSelection(sel: { provider: string; id: string }): void;
 	/** Drop the cached mcp_health when no frame has arrived for 60s. */
 	markMcpHealthStale(): void;
+	/**
+	 * Pin a single active "focus" session — drives the Overview hero timer and
+	 * the Focus button on task cards. `focusStartedAtMs` is stamped on set so
+	 * the timer survives remounts without re-reading `Date.now()`. Both reset
+	 * to `null` on `setFocusSession(null)` (Clear Focus button).
+	 */
+	focusSessionId: string | null;
+	focusStartedAtMs: number | null;
+	setFocusSession(id: string | null): void;
 }
 
 export const useStore = create<StoreState>()(
@@ -332,6 +341,10 @@ export const useStore = create<StoreState>()(
 		// panels are overlay drawers and always start closed.
 		sidebarOpen: readChromeOpen("omp-deck:sidebar-open", true),
 		inspectorOpen: readChromeOpen("omp-deck:inspector-open", false),
+		// Active focus session — null until the user starts focusing on a task.
+		// Both fields reset together via setFocusSession(null).
+		focusSessionId: null,
+		focusStartedAtMs: null,
 
 		async bootstrap() {
 			get().connect();
@@ -710,6 +723,16 @@ export const useStore = create<StoreState>()(
 
 	markMcpHealthStale() {
 		set({ mcpHealth: { response: null, lastReceivedAtMs: null } });
+	},
+
+	setFocusSession(id) {
+		// Stamping `Date.now()` at the moment of set keeps the Overview timer
+		// stable across re-renders; the timer reads `Date.now() - focusStartedAtMs`
+		// inside a 1s interval and never needs to be told when focus began.
+		set({
+			focusSessionId: id,
+			focusStartedAtMs: id === null ? null : Date.now(),
+		});
 	},
 	})),
 );

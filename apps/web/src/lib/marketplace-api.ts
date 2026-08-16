@@ -70,6 +70,11 @@ export const marketplaceApi = {
 			body: JSON.stringify(body),
 		});
 	},
+	uninstallByPluginId(pluginId: string): Promise<{ ok: boolean }> {
+		return req<{ ok: boolean }>(`/marketplace/install/${encodeURIComponent(pluginId)}`, {
+			method: "DELETE",
+		});
+	},
 	refresh(): Promise<{ ok: boolean }> {
 		return req<{ ok: boolean }>("/marketplace/refresh", { method: "POST" });
 	},

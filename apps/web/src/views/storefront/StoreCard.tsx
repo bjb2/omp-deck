@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { CheckCircle2 } from "lucide-react";
 import type { StoreItem } from "@omp-deck/protocol";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/lib/store";
@@ -35,11 +36,25 @@ export function StoreCard({ item, size = "regular" }: { item: StoreItem; size?: 
 						{item.section} · {item.author.name}
 					</div>
 				</div>
-				{item.isNew ? (
-					<span className="shrink-0 rounded-md bg-accent/15 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-meta text-accent">
-						New
-					</span>
-				) : null}
+				<div className="flex shrink-0 items-center gap-1.5">
+					{item.updateAvailable ? (
+						<span className="relative flex h-2 w-2" title="Update available">
+							<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+							<span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+						</span>
+					) : null}
+					{item.verified ? (
+						<span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-meta text-emerald-600 dark:text-emerald-400" title="Verified source">
+							<CheckCircle2 className="h-2.5 w-2.5" />
+							Verified
+						</span>
+					) : null}
+					{item.isNew ? (
+						<span className="shrink-0 rounded-md bg-accent/15 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-meta text-accent">
+							New
+						</span>
+					) : null}
+				</div>
 			</div>
 			<p className={cn("line-clamp-2 text-ink-2", size === "hero" ? "text-sm" : "text-xs")}>{item.tagline}</p>
 			<div className="mt-auto flex items-center justify-between gap-2 pt-2">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { StoreItem } from "@omp-deck/protocol";
-import { storefrontApi } from "@/lib/storefront-api";
+import { storefrontApi, storefrontStatus } from "@/lib/storefront-api";
 import { useStorefrontStore } from "@/lib/storefront-store";
 import { useStore } from "@/lib/store";
 import { FilterChips } from "./FilterChips";
@@ -19,6 +19,9 @@ export function StorefrontHome() {
 	const [trending, setTrending] = useState<StoreItem[]>([]);
 	const [fresh, setFresh] = useState<StoreItem[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [offlineError, setOfflineError] = useState<string | null>(storefrontStatus.getError());
+
+	useEffect(() => storefrontStatus.subscribe(() => setOfflineError(storefrontStatus.getError())), []);
 
 	// Subscribe to the global pulse slice so this view re-renders on
 	// `store_item_added` (and sibling frames). The pulse itself is
@@ -86,6 +89,11 @@ export function StorefrontHome() {
 			<McpHealthStrip />
 			<FilterChips active="all" />
 
+			{offlineError ? (
+				<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger" role="alert">
+					{offlineError}
+				</div>
+			) : null}
 			{loading ? (
 				<div className="font-mono text-2xs text-ink-3">loading…</div>
 			) : (

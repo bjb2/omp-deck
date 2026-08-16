@@ -20,6 +20,7 @@ export type BroadcastFrame = Extract<
 	| { type: "store_item_removed" }
 	| { type: "discovery_added" }
 	| { type: "mcp_health" }
+	| { type: "session_status_hint" }
 	| { type: "genui_delta" }
 	| { type: "oauth_consent" }
 	| { type: "oauth_progress" }

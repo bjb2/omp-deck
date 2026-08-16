@@ -33,7 +33,22 @@ beforeEach(() => {
 
 afterEach(() => {
 	closeDb();
-	fs.rmSync(dir, { recursive: true, force: true });
+	// ponytail: Windows can hold the sqlite file handle open for several
+	// seconds after close. Defer the rm so it never blocks the next test.
+	// The test dir is in %TEMP% — leftovers get swept by the OS at next
+	// reboot, so a stuck rm is harmless.
+	const doomed = dir;
+	setTimeout(() => {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			try {
+				fs.rmSync(doomed, { recursive: true, force: true });
+				return;
+			} catch {
+				// Best-effort teardown for a tmpdir we created moments ago;
+				// never correct to flake the suite over it.
+			}
+		}
+	}, 50);
 });
 
 const baseCfg = () => loadAuthConfig("0.0.0.0");

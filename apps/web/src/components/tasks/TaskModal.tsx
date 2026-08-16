@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { Archive, MessageSquarePlus, RotateCcw, Trash2, X } from "lucide-react";
+import { Archive, GitBranch, MessageSquarePlus, RotateCcw, Trash2, X } from "lucide-react";
 import type { Task, TaskState } from "@omp-deck/protocol";
 
 import { MarkdownEdit } from "@/components/MarkdownEdit";
 import { Modal } from "@/components/ui/Modal";
+import { tasksApi } from "@/lib/tasks-api";
 import { cn } from "@/lib/utils";
 
 interface Props {
 	task: Task | null;
 	states: TaskState[];
 	onClose: () => void;
-	onSave: (patch: { title?: string; body?: string; stateId?: string; cwd?: string }) => void;
+	onSave: (patch: { title?: string; body?: string; stateId?: string; cwd?: string; energyTag?: "low" | "medium" | "high" }) => void;
 	onDelete: () => void;
 	onArchive: () => void;
 	onOpenInChat: () => void;
@@ -38,15 +39,76 @@ export function TaskModal({
 	const [title, setTitle] = useState("");
 	const [stateId, setStateId] = useState("");
 	const [cwd, setCwd] = useState("");
+	const [energyTag, setEnergyTag] = useState<"low" | "medium" | "high" | "">("");
+
+	// Dispatch form state — always rendered so hooks order is stable.
+	const [newBranches, setNewBranches] = useState(2);
+	const [newPrompt, setNewPrompt] = useState("");
+	const [dispatchBusy, setDispatchBusy] = useState(false);
+	const [dispatchError, setDispatchError] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!task) return;
 		setTitle(task.title);
 		setStateId(task.stateId);
 		setCwd(task.cwd ?? "");
+		setEnergyTag(task.energyTag ?? "");
 	}, [task]);
 
 	if (!task) return null;
+
+	const dispatchBranches = task.dispatch?.branches ?? [];
+
+	async function handleDispatch(): Promise<void> {
+		if (!task) return;
+		setDispatchBusy(true);
+		setDispatchError(null);
+		try {
+			await tasksApi.dispatch(task.id, {
+				branches: newBranches,
+				prompt: newPrompt.trim() || undefined,
+			});
+			onSave({});
+		} catch (err) {
+			setDispatchError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setDispatchBusy(false);
+		}
+	}
+	function commitEnergyTag(next: string): void {
+		const tag = (next || undefined) as "low" | "medium" | "high" | undefined;
+		setEnergyTag(next as any);
+		if (!task || tag === task.energyTag) return;
+		onSave({ energyTag: tag });
+	}
+
+	async function handleMerge(branchId: string): Promise<void> {
+		if (!task) return;
+		setDispatchBusy(true);
+		setDispatchError(null);
+		try {
+			await tasksApi.mergeDispatchBranch(task.id, branchId);
+			onSave({});
+		} catch (err) {
+			setDispatchError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setDispatchBusy(false);
+		}
+	}
+
+	async function handleDiscard(branchId: string): Promise<void> {
+		if (!task) return;
+		setDispatchBusy(true);
+		setDispatchError(null);
+		try {
+			await tasksApi.discardDispatchBranch(task.id, branchId);
+			onSave({});
+		} catch (err) {
+			setDispatchError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setDispatchBusy(false);
+		}
+	}
 
 	function commitTitle(): void {
 		if (!task) return;
@@ -135,6 +197,19 @@ export function TaskModal({
 							className="w-full bg-transparent font-mono text-2xs text-ink placeholder:text-ink-4 focus:outline-none"
 						/>
 					</span>
+					<span className="text-ink-4">energy</span>
+					<span className="col-span-3">
+						<select
+							value={energyTag}
+							onChange={(e) => commitEnergyTag(e.target.value)}
+							className="bg-transparent font-mono text-2xs text-ink outline-none border border-line rounded px-1.5 py-0.5"
+						>
+							<option value="">(none)</option>
+							<option value="low">Low Energy</option>
+							<option value="medium">Medium Energy</option>
+							<option value="high">High Energy</option>
+						</select>
+					</span>
 					{isArchived ? (
 						<>
 							<span className="text-warn">archived</span>
@@ -150,6 +225,108 @@ export function TaskModal({
 					onChange={(next) => onSave({ body: next })}
 					placeholder="Click to add notes — markdown supported. Use this for context, acceptance criteria, links."
 				/>
+
+				<section className="mt-6 border-t border-line pt-5">
+					<header className="mb-3 flex items-center gap-2">
+						<GitBranch className="h-4 w-4 text-ink-3" />
+						<h3 className="font-mono text-2xs uppercase tracking-meta text-ink-3">
+							Dispatch Fan-Out
+						</h3>
+					</header>
+
+					{dispatchBranches.length ? (
+						<ul className="mb-4 space-y-2">
+							{dispatchBranches.map((b) => (
+								<li
+									key={b.id}
+									className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-3 py-2"
+								>
+									<span
+										aria-hidden="true"
+										className={cn(
+											"h-2 w-2 shrink-0 rounded-full",
+											b.status === "merged" && "bg-ok",
+											b.status === "discarded" && "bg-ink-4",
+											b.status === "failed" && "bg-danger",
+											b.status === "running" && "bg-warn animate-pulse",
+										)}
+									/>
+									<span className="font-mono text-xs text-ink">
+										{b.branchName || b.id.slice(0, 8)}
+									</span>
+									<span className="font-mono text-2xs uppercase tracking-meta text-ink-4">
+										{b.status}
+									</span>
+									{b.sessionId ? (
+										<a
+											href={`/chat?session=${encodeURIComponent(b.sessionId)}`}
+											className="text-2xs text-link hover:underline"
+											title="Open branch session"
+										>
+											open chat
+										</a>
+									) : null}
+									<div className="ml-auto flex items-center gap-1">
+										<button
+											type="button"
+											disabled={dispatchBusy || b.status === "merged" || b.status === "discarded"}
+											onClick={() => handleMerge(b.id)}
+											className="btn-primary h-7 px-2 text-xs"
+										>
+											Merge
+										</button>
+										<button
+											type="button"
+											disabled={dispatchBusy || b.status === "merged" || b.status === "discarded"}
+											onClick={() => handleDiscard(b.id)}
+											className="h-7 rounded-md border border-line px-2 text-xs text-ink-2 hover:bg-paper-3 hover:text-ink disabled:opacity-50"
+										>
+											Discard
+										</button>
+									</div>
+								</li>
+							))}
+						</ul>
+					) : null}
+
+					<div className="flex flex-wrap items-end gap-3">
+						<label className="flex flex-col gap-1 font-mono text-2xs uppercase tracking-meta text-ink-3">
+							Branches
+							<select
+								value={newBranches}
+								onChange={(e) => setNewBranches(Number(e.target.value))}
+								disabled={dispatchBusy}
+								className="field h-8 px-2 font-mono text-sm"
+							>
+								<option value={2}>2</option>
+								<option value={3}>3</option>
+								<option value={4}>4</option>
+								<option value={5}>5</option>
+							</select>
+						</label>
+						<label className="flex min-w-0 flex-1 flex-col gap-1 font-mono text-2xs uppercase tracking-meta text-ink-3">
+							Prompt (optional)
+							<input
+								value={newPrompt}
+								onChange={(e) => setNewPrompt(e.target.value)}
+								disabled={dispatchBusy}
+								placeholder="extra instructions for the runner"
+								className="field h-8 px-2 font-mono text-sm"
+							/>
+						</label>
+						<button
+							type="button"
+							disabled={dispatchBusy}
+							onClick={handleDispatch}
+							className="btn-primary h-8 px-3 text-sm"
+						>
+							{dispatchBusy ? "Dispatching…" : `Dispatch ${newBranches} Branches`}
+						</button>
+					</div>
+					{dispatchError ? (
+						<p className="mt-2 font-mono text-2xs text-danger">{dispatchError}</p>
+					) : null}
+				</section>
 			</div>
 		</Modal>
 	);

@@ -168,6 +168,18 @@ export function buildMarketplaceRouter(service: MarketplaceService): Hono {
 		}
 	});
 
+	app.delete("/marketplace/install/:pluginId", async (c) => {
+		const pluginId = c.req.param("pluginId");
+		if (!pluginId) return c.json({ error: "pluginId is required" }, 400);
+		try {
+			await service.uninstall({ id: pluginId });
+			return c.json({ ok: true });
+		} catch (err) {
+			log.error(`uninstall failed for ${pluginId}`, err);
+			return c.json({ error: String((err as Error).message ?? err) }, 500);
+		}
+	});
+
 	app.post("/marketplace/install/dry-run", async (c) => {
 		let body: DryRunInstallRequest;
 		try {

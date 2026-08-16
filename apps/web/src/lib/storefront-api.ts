@@ -34,11 +34,36 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function safe<T>(fallback: T, fn: () => Promise<T>): Promise<T> {
 	try {
-		return await fn();
+		const result = await fn();
+		lastError = null;
+		for (const l of statusListeners) l();
+		return result;
 	} catch {
+		lastError = "Storefront service is unreachable.";
+		for (const l of statusListeners) l();
 		return fallback;
 	}
 }
+
+// ─── Reachability side-channel ──────────────────────────────────────────────
+// `safe()` swallows every failure so callers always get a mountable shape —
+// intentional, most call sites treat "empty" and "offline" the same way.
+// Views that want to tell a user "nothing here yet" apart from "can't reach
+// the server" subscribe here instead of threading an error through every
+// return type.
+let lastError: string | null = null;
+const statusListeners = new Set<() => void>();
+
+export const storefrontStatus = {
+	/** Most recent `safe()` outcome: null when the last call succeeded. */
+	getError(): string | null {
+		return lastError;
+	},
+	subscribe(listener: () => void): () => void {
+		statusListeners.add(listener);
+		return () => statusListeners.delete(listener);
+	},
+};
 
 export const storefrontApi = {
 	featured(limit = 8): Promise<StorefrontListResponse> {

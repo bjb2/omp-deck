@@ -26,6 +26,7 @@ import { StorefrontSection } from "./views/storefront/StorefrontSection";
 import { StorefrontDetail } from "./views/storefront/StorefrontDetail";
 import { StorefrontSearch } from "./views/storefront/StorefrontSearch";
 import { OverviewView } from "./views/OverviewView";
+import { ReceiptsView } from "./views/ReceiptsView";
 import { onboardingApi } from "./lib/onboarding-api";
 import { ShellView } from "./views/ShellView";
 
@@ -80,6 +81,7 @@ const router = createBrowserRouter([
 		element: <OnboardingGate />,
 		children: [
 			{ path: "/", element: <OverviewView /> },
+			{ path: "/receipts", element: <ReceiptsView /> },
 			{ path: "/chat", element: <ChatView /> },
 			{
 				path: "/explorer",

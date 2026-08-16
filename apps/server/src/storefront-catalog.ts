@@ -19,8 +19,9 @@
  */
 import { existsSync, promises as fs } from "node:fs";
 import * as path from "node:path";
+import knownGoodSourcesJson from "./storefront/known-good-sources.json" with { type: "json" };
 
-import type { StoreItem, StoreSection } from "@omp-deck/protocol";
+import type { InstalledPluginInfo, StoreItem, StoreSection } from "@omp-deck/protocol";
 
 import { loadConfig } from "./config.ts";
 import { logger } from "./log.ts";
@@ -32,6 +33,64 @@ const log = logger("storefront:catalog");
 /** Bump when the seed entries change shape so the web can show a drift
  *  warning in the corner. Compared against localStorage at boot. */
 export const STOREFRONT_VERSION = "1";
+
+interface KnownGoodSources {
+	sources: Record<string, { verifiedAt: string; installable: string[]; knownFailures: string[]; notes?: string }>;
+}
+
+const knownGoodData = knownGoodSourcesJson as unknown as KnownGoodSources;
+
+function compareVersions(a: string, b: string): number {
+	const pa = a.split(/[.\-+]/).filter(Boolean);
+	const pb = b.split(/[.\-+]/).filter(Boolean);
+	const len = Math.max(pa.length, pb.length);
+	for (let i = 0; i < len; i++) {
+		const na = pa[i] ?? "0";
+		const nb = pb[i] ?? "0";
+		const da = Number.parseInt(na, 10);
+		const db = Number.parseInt(nb, 10);
+		if (Number.isFinite(da) && Number.isFinite(db)) {
+			if (da !== db) return da - db;
+			continue;
+		}
+		const c = na.localeCompare(nb);
+		if (c !== 0) return c;
+	}
+	return 0;
+}
+
+async function readInstalledIndex(): Promise<Map<string, InstalledPluginInfo>> {
+	try {
+		const list = await getMarketplace().listInstalled();
+		const idx = new Map<string, InstalledPluginInfo>();
+		for (const info of list) {
+			idx.set(info.id, info);
+		}
+		return idx;
+	} catch (err) {
+		log.warn(`installed-registry read failed`, err);
+		return new Map();
+	}
+}
+
+function checkVerified(item: StoreItem): boolean {
+	if (item.source.kind !== "marketplace") return false;
+	const ref = item.source.ref ?? "";
+	const url = item.source.url ?? "";
+	const pluginName = (item.installAction?.payload as { name?: string })?.name ?? item.name;
+
+	for (const [sourceKey, info] of Object.entries(knownGoodData.sources ?? {})) {
+		const matchesSource =
+			sourceKey === ref ||
+			sourceKey.endsWith(`/${ref}`) ||
+			ref.endsWith(`/${sourceKey}`) ||
+			(url !== "" && url.includes(sourceKey));
+		if (matchesSource && info.installable && info.installable.includes(pluginName)) {
+			return true;
+		}
+	}
+	return false;
+}
 
 interface McpConfigForCatalog {
 	mcpServers?: Record<string, { type?: string; url?: string; command?: string }>;
@@ -139,7 +198,25 @@ export async function buildStorefrontCatalog(): Promise<StoreItem[]> {
 	} catch (err) {
 		log.warn(`storefront mcp enrichment failed`, err);
 	}
-	return items;
+
+	try {
+		const installedIdx = await readInstalledIndex();
+		return items.map((item): StoreItem => {
+			const payload = item.installAction?.payload as { name?: string; marketplace?: string } | undefined;
+			const altId = payload?.name && payload?.marketplace ? `${payload.name}@${payload.marketplace}` : undefined;
+			const installedInfo = installedIdx.get(item.id) ?? (altId ? installedIdx.get(altId) : undefined);
+
+			const installed = !!installedInfo;
+			const catalogVersion = item.versionHistory[0]?.version;
+			const updateAvailable = installed && !!catalogVersion && !!installedInfo?.version && compareVersions(catalogVersion, installedInfo.version) > 0;
+			const verified = checkVerified(item);
+
+			return { ...item, installed, updateAvailable, verified };
+		});
+	} catch (err) {
+		log.warn(`storefront item state annotation failed`, err);
+		return items;
+	}
 }
 
 let cachedItems: StoreItem[] | undefined;

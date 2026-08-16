@@ -25,6 +25,7 @@ import {
 import { ConcurrencyController } from "./routines/concurrency.ts";
 import { runV1Pipeline } from "./routines/v1-runner.ts";
 import { finalizeRun, insertAbortedRun } from "./db/routine-step-runs.ts";
+import type { WsHub } from "./ws.ts";
 import { loadConfig } from "./config.ts";
 
 const log = logger("routines-runner");
@@ -41,6 +42,12 @@ export class RoutinesRunner {
 	private crons = new Map<string, ScheduledCron[]>();
 	private disposed = false;
 	readonly concurrency = new ConcurrencyController();
+
+	constructor(private wsHub?: WsHub) {}
+
+	setWsHub(wsHub: WsHub): void {
+		this.wsHub = wsHub;
+	}
 
 	start(): void {
 		const routines = listRoutines();
@@ -211,6 +218,7 @@ export class RoutinesRunner {
 				// so the embedded coding agent can't reach into the user's home
 				// for "context" it wasn't asked about.
 				agentSandboxRoot: path.join(path.dirname(config.dbPath), "routine-runs"),
+				wsHub: this.wsHub,
 			});
 		} catch (err) {
 			log.error(`V1 pipeline threw for ${routine.id}`, err);

@@ -82,6 +82,14 @@ export function RunDetailView() {
 			? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
 			: null;
 
+	const budgetMaxUsd = routine?.budget?.max_llm_cost_usd;
+	const hasBudget = typeof budgetMaxUsd === "number" && Number.isFinite(budgetMaxUsd) && budgetMaxUsd > 0;
+	const budgetUsedUsd = totalCostUsd;
+	const budgetRatio = hasBudget && budgetMaxUsd ? budgetUsedUsd / budgetMaxUsd : 0;
+	const budgetPct = Math.min(999, Math.round(budgetRatio * 100));
+	const budgetBarColor =
+	budgetRatio >= 1 ? "bg-danger" : budgetRatio >= 0.8 ? "bg-warn" : "bg-accent";
+
 	async function replay(): Promise<void> {
 		if (!id) return;
 		try {
@@ -149,6 +157,23 @@ export function RunDetailView() {
 						<MetaCell label="steps" value={run ? `${run.stepCountTotal} (${run.stepCountFailed} failed)` : "—"} />
 						<MetaCell label="cost (est)" value={`$${totalCostUsd.toFixed(4)} · ${run?.totalLlmTokens ?? 0}tok`} />
 					</div>
+
+					{hasBudget ? (
+						<div className="border-b border-line px-3 py-2">
+							<div className="mb-1 flex items-center justify-between font-mono text-2xs text-ink-3">
+								<span className="uppercase tracking-meta">budget</span>
+								<span>
+									${budgetUsedUsd.toFixed(4)} / ${(budgetMaxUsd ?? 0).toFixed(2)} · {budgetPct}%
+								</span>
+							</div>
+							<div className="h-1.5 w-full overflow-hidden rounded bg-paper-3">
+								<div
+									className={cn("h-full transition-all", budgetBarColor)}
+									style={{ width: `${Math.min(100, budgetPct)}%` }}
+								/>
+							</div>
+						</div>
+					) : null}
 
 					<div className="flex-1 overflow-y-auto px-3 py-3">
 						{steps.length === 0 ? (

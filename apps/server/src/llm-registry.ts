@@ -623,11 +623,18 @@ function mapEvent(event: AssistantMessageEvent): LlmChunk | null {
 
 let _instance: DeckLLMRegistry | undefined;
 
+export type DeckLLMRegistryLike = DeckLLMProviderRegistry;
+let _registryOverride: DeckLLMRegistryLike | null = null;
+export function __setDeckLLMRegistryForTests(reg: DeckLLMRegistryLike | null): void {
+	_registryOverride = reg;
+}
+
 /** Process-wide singleton. The registry refreshes its cache on every call
  *  (`cacheMs=5s`); the SDK's own registry hot-reloads via the
  *  CustomProvidersRegistry file watcher, so user edits to `models.yml`
  *  surface within one tick. */
 export function getDeckLLMRegistry(): DeckLLMProviderRegistry {
+	if (_registryOverride) return _registryOverride;
 	if (!_instance) _instance = new DeckLLMRegistry();
 	return _instance;
 }

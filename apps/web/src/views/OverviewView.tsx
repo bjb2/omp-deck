@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, Flame, Star } from "lucide-react";
+import { ExternalLink, FileText, Flame, Star, Zap } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import {
 	overviewApi,
@@ -11,6 +11,49 @@ import {
 import { cn } from "@/lib/utils";
 
 const WINDOWS: readonly OverviewWindow[] = ["24h", "7d", "30d"];
+
+function SpendCard({ costByDay }: { costByDay?: Array<{ date: string; costMicrocents: number }> }) {
+	const days = costByDay ?? [];
+	const recent7 = days.slice(-7);
+	const total7dMicros = recent7.reduce((acc, c) => acc + (c.costMicrocents || 0), 0);
+	const total7dUsd = total7dMicros / 1_000_000;
+
+	const maxDayMicros = Math.max(1, ...days.map((c) => c.costMicrocents || 0));
+
+	return (
+		<section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper px-6 py-5">
+			<div className="flex items-center justify-between gap-3">
+				<div>
+					<div className="font-mono text-2xs uppercase tracking-meta text-ink-3">Spend (7-Day Total)</div>
+					<div className="font-mono text-2xl font-semibold text-ink">${total7dUsd.toFixed(2)}</div>
+				</div>
+				<div className="font-mono text-2xs text-ink-3">30-day breakdown</div>
+			</div>
+			{days.length === 0 ? (
+				<div className="font-mono text-2xs text-ink-4">No cost data logged yet</div>
+			) : (
+				<div className="flex h-12 items-end gap-1 pt-2">
+					{days.map((entry) => {
+						const heightPercent = Math.max(8, Math.round((entry.costMicrocents / maxDayMicros) * 100));
+						const usdVal = (entry.costMicrocents / 1_000_000).toFixed(2);
+						return (
+							<div
+								key={entry.date}
+								className="group relative flex-1"
+								title={`${entry.date}: $${usdVal}`}
+							>
+								<div
+									className="w-full rounded-t bg-accent/80 transition-all group-hover:bg-accent"
+									style={{ height: `${heightPercent}%` }}
+								/>
+							</div>
+						);
+					})}
+				</div>
+			)}
+		</section>
+	);
+}
 
 /**
  * `/` — the ADHD-oriented home. The whole page is arranged around a single
@@ -87,10 +130,21 @@ export function OverviewView() {
 						<section className="flex flex-col gap-4 rounded-2xl border border-line bg-paper-2 px-6 py-6">
 							<div className="flex items-center justify-between gap-3">
 								<div className="font-mono text-2xs uppercase tracking-meta text-ink-3">right now</div>
-								<div className="flex items-center gap-1.5 text-ink-2" title="Consecutive active days">
+								<div className="flex items-center gap-3">
+									<button
+										type="button"
+										onClick={() => navigate("/receipts")}
+										className="flex items-center gap-1.5 rounded-full border border-line bg-paper px-3 py-1 font-mono text-2xs text-ink hover:border-ink/30 transition-colors"
+										title="View session receipts"
+									>
+										<FileText className="h-3.5 w-3.5 text-accent" />
+										<span>Receipts ({data?.receiptsTodayCount ?? 0})</span>
+									</button>
+									<div className="flex items-center gap-1.5 text-ink-2" title="Consecutive active days">
 									<Flame className="h-4 w-4 text-accent" />
 									<span className="font-mono text-sm text-ink">{data?.focus.streakDays ?? 0}</span>
 									<span className="font-mono text-2xs uppercase tracking-meta text-ink-3">day streak</span>
+									</div>
 								</div>
 							</div>
 							{loading ? (
@@ -161,6 +215,37 @@ export function OverviewView() {
 										</div>
 									))}
 						</section>
+
+						{/* Spend card (trailing 7d total + 30d sparkline) */}
+						<SpendCard costByDay={data?.costByDay} />
+
+						{/* Sharp Hours (ADHD peak focus hours) */}
+						{data?.sharpHours && data.sharpHours.length > 0 ? (
+							<section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper px-6 py-5">
+								<div className="flex items-center gap-2">
+									<Zap className="h-4 w-4 text-accent" />
+									<h2 className="font-mono text-2xs uppercase tracking-meta text-ink">Sharp Hours (Peak Productivity)</h2>
+								</div>
+								<p className="text-xs text-ink-3">
+									Hours of the day when you consistently complete energy-tagged tasks (3+ completions in past 30 days).
+								</p>
+								<div className="flex flex-wrap gap-2 pt-1">
+									{data.sharpHours.map((sh) => (
+										<div
+											key={sh.hour}
+											className="flex items-center gap-2 rounded-lg border border-accent/20 bg-accent-soft/20 px-3 py-1.5 font-mono text-xs text-ink"
+										>
+											<span className="font-semibold text-accent">
+												{String(sh.hour).padStart(2, "0")}:00 - {String((sh.hour + 1) % 24).padStart(2, "0")}:00
+											</span>
+											<span className="rounded bg-paper px-1.5 py-0.5 text-2xs text-ink-3">
+												{sh.count} done
+											</span>
+										</div>
+									))}
+								</div>
+							</section>
+						) : null}
 
 						<div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
 							{/* News */}

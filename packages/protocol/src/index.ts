@@ -1138,6 +1138,24 @@ type _ServerFrameBase =
 	 */
 	| { type: "mcp_health"; status: McpHealthStatus[] }
 	/**
+	 * Server-side idle classification. The deck's companion runtime polls
+	 * the bridge for sessions that have been quiet for a while and asks
+	 * the LLM to label the last ~20 transcript lines as one of the five
+	 * `hint` values. The web client renders a status pill on the session
+	 * card and can bump the badge when `hint` is `needs_input` or `error`.
+	 *
+	 * Best-effort: the absence of a frame for a session means "no signal"
+	 * (treat as `working`); clients MUST NOT use the hint for anything
+	 * authoritative. The companion never classifies a session that
+	 * recently received user activity — the bridge's `lastActivityAt`
+	 * threshold acts as the noise filter.
+	 */
+	| {
+			type: "session_status_hint";
+			sessionId: string;
+			hint: "working" | "needs_input" | "error" | "done" | "idle";
+	  }
+	/**
 	 * Persistent Gholam chat — a new message landed in the append-only log.
 	 * Broadcast on every assistant / user / tool row insert so the chat-list
 	 * view and the chat-thread view reconcile without per-chat subscribe.
@@ -1372,6 +1390,26 @@ export interface Task {
 	 */
 	stateEnteredAt: string;
 	archivedAt?: string;
+	dispatchJson?: string;
+	dispatch?: TaskDispatch;
+	energyTag?: "low" | "medium" | "high";
+}
+
+export type TaskDispatchStatus = "running" | "merged" | "discarded" | "failed";
+export type DispatchBranchStatus = TaskDispatchStatus;
+
+export interface TaskDispatchBranch {
+	id: string;
+	worktreePath: string;
+	branchName: string;
+	sessionId: string | null;
+	status: TaskDispatchStatus;
+	createdAt: string;
+}
+export type DispatchBranch = TaskDispatchBranch;
+
+export interface TaskDispatch {
+	branches: TaskDispatchBranch[];
 }
 
 export interface CreateTaskRequest {
@@ -1379,6 +1417,8 @@ export interface CreateTaskRequest {
 	body?: string;
 	stateId?: string;
 	cwd?: string;
+	energyTag?: "low" | "medium" | "high";
+	dispatchJson?: string;
 }
 
 export interface UpdateTaskRequest {
@@ -1388,6 +1428,8 @@ export interface UpdateTaskRequest {
 	orderInState?: number;
 	cwd?: string;
 	archived?: boolean;
+	energyTag?: "low" | "medium" | "high";
+	dispatchJson?: string;
 }
 
 export interface ListTasksResponse {
@@ -2333,6 +2375,12 @@ export interface StoreItem {
 	isNew?: boolean;
 	/** Server is currently pushing an SSE pulse for this item. */
 	isLive?: boolean;
+	/** Backend knows this item is currently installed from the registry. Drives the primary CTA toggle on the detail page. */
+	installed?: boolean;
+	/** Catalog version differs from the installed-registry version. Renders a small dot on the card. */
+	updateAvailable?: boolean;
+	/** Source matches the curated known-good-sources list. Renders a "Verified" chip on the card. */
+	verified?: boolean;
 }
 
 /** Single discovery result from a provider search. */

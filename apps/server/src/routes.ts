@@ -56,6 +56,7 @@ import { buildPreviewRouter } from "./routes-preview.ts";
 import { buildOpenshipRouter } from "./routes-openship.ts";
 import { getMcpHealthProbe } from "./mcp-health.ts";
 import { buildMcpHealthRouter } from "./routes-mcp-health.ts";
+import { buildSessionAttachRouter, buildSessionAttachWebRouter } from "./routes-session-attach.ts";
 import { startCustomProvidersWatcher } from "./custom-providers.ts";
 import type { RoutinesRunner } from "./routines-runner.ts";
 import type { BridgeSupervisor } from "./bridge-supervisor.ts";
@@ -258,7 +259,7 @@ export function buildRouter(
 		}
 	});
 
-	app.route("/", buildTasksRouter());
+	app.route("/", buildTasksRouter(bridge));
 	app.route("/", buildUploadsRouter({ uploadsRoot: config.uploadsRoot }));
 	app.route("/", buildRoutinesRouter(runner));
 	app.route("/", buildHooksRouter(runner));
@@ -311,6 +312,8 @@ export function buildRouter(
 	app.route("/", buildGenuiRouter());
 	app.route("/", buildPreviewRouter());
 	app.route("/", buildOpenshipRouter());
+	app.route("/api", buildSessionAttachRouter());
+	app.route("/attach", buildSessionAttachWebRouter());
 	startCustomProvidersWatcher();
 	return app;
 }

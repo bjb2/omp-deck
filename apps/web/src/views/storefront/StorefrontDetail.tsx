@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ExternalLink, Star } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, Star, Trash2 } from "lucide-react";
 import type { StoreItem, StoreSection } from "@omp-deck/protocol";
 import { storefrontApi } from "@/lib/storefront-api";
+import { marketplaceApi } from "@/lib/marketplace-api";
+import { useStore } from "@/lib/store";
 import { InstallButton } from "./InstallButton";
 
 /**
@@ -73,7 +75,11 @@ export function StorefrontDetail() {
 						<h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink">{item.name}</h1>
 						<p className="mt-1 text-sm text-ink-2">{item.tagline}</p>
 					</div>
-					<InstallButton item={item} />
+					{item.installed ? (
+						<RemoveButton item={item} onRemoved={() => setItem({ ...item, installed: false })} />
+					) : (
+						<InstallButton item={item} />
+					)}
 				</div>
 				<div className="flex flex-wrap items-center gap-3 pt-2">
 					<DetailLabel label="Author" value={item.author.name} href={item.author.url} />
@@ -158,4 +164,57 @@ function DetailLabel({ label, value, href }: { label: string; value: React.React
 			)}
 		</div>
 	);
+}
+
+function RemoveButton({ item, onRemoved }: { item: StoreItem; onRemoved: () => void }) {
+	const [removing, setRemoving] = useState(false);
+
+	async function handleRemove() {
+		if (removing) return;
+		setRemoving(true);
+		try {
+			await marketplaceApi.uninstallByPluginId(item.id);
+			pushToast("info", `Removed ${item.name}`, `Uninstalled from deck marketplace.`);
+			onRemoved();
+		} catch (err) {
+			setRemoving(false);
+			const e = err as Error & { message?: string };
+			pushToast("error", `Remove failed: ${item.name}`, e.message ?? String(err));
+		}
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				void handleRemove();
+			}}
+			disabled={removing}
+			className="inline-flex items-center gap-1.5 rounded-full border border-danger/40 bg-danger/10 px-4 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/15 disabled:opacity-50"
+		>
+			{removing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+			{removing ? "Removing…" : "Remove"}
+		</button>
+	);
+}
+
+function pushToast(level: "info" | "error", title: string, body: string): void {
+	const id = `storefront-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+	useStore.setState((s) => ({
+		notifications: [
+			...s.notifications,
+			{
+				id,
+				level,
+				title,
+				body,
+				timestamp: new Date().toISOString(),
+				receivedAtMs: Date.now(),
+				deliveredOs: false,
+				dismissed: false,
+			},
+		],
+	}));
 }
