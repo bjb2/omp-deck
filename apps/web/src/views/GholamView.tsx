@@ -27,6 +27,10 @@ interface GholamState {
 	lastBeatAt?: string;
 	prioritiesCount: number;
 	wsPort?: number;
+	/** Surfaces start-time / spawn failures from the deck (e.g. sidecar
+	 *  source missing, port-bind retries exhausted). When set, the deck is
+	 *  not actually running gholam even if `running` happens to be true. */
+	error?: string;
 }
 
 interface Priority {
@@ -59,6 +63,11 @@ export function GholamView(): JSX.Element {
 		setPriorities(priorRes.priorities ?? []);
 		everOnlineRef.current = true;
 		setLastOfflineError(undefined);
+		// If the deck reports running=false OR has a structured `error`,
+		// surface it as the offline-card message so the user sees the
+		// real reason (e.g. sidecar source missing, port bind retry
+		// exhausted) instead of a generic "offline".
+		if (statusRes.error) setLastOfflineError(statusRes.error);
 	} catch (e) {
 		setState(null);
 		setPriorities([]);
@@ -76,6 +85,7 @@ export function GholamView(): JSX.Element {
 			everOnlineRef.current = true;
 			setLastOfflineError(undefined);
 			setError(undefined);
+		if (next.error) setLastOfflineError(next.error);
 		} catch (e) {
 			setLastOfflineError(String((e as Error).message ?? e));
 		}

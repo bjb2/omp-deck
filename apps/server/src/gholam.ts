@@ -58,6 +58,11 @@ function openGholamWs(): void {
 	gholamWsState = "connecting";
 	const rawWsUrl = process.env.GHOLAM_WS_URL?.trim() || "";
 	if (rawWsUrl) {
+		// External sidecar mode is opt-in (debugging / multi-host setups only).
+		// Production decks always run gholam in-process via spawnSidecar();
+		// an unexpected GHOLAM_WS_URL is almost always misconfiguration that
+		// leaves the deck stuck "connecting" forever, so log loudly.
+		log.warn(`gholam: external sidecar mode active (GHOLAM_WS_URL=${rawWsUrl}). In-process spawn disabled.`);
 		const base = rawWsUrl.replace(/\/+$/, "");
 		gholamWsUrl = base.endsWith("/ws") ? base : `${base}/ws`;
 	} else if (port) {
@@ -149,6 +154,8 @@ export interface GholamState {
 	lastBeatAt?: string;
 	prioritiesCount: number;
 	wsPort?: number;
+	/** Last start-failure or spawn error. Cleared on successful start. */
+	error?: string;
 }
 
 interface GholamInternalState {
@@ -159,6 +166,8 @@ interface GholamInternalState {
 	lastBeatAt?: string;
 	wsPort?: number;
 	priorities: GholamPriority[];
+	/** Most recent start error. Cleared by a successful start(). */
+	error?: string;
 	/** Bearer token the sidecar's WS handshake validates. Persisted in
 	 *  `OMP_DECK_DATA_DIR/gholam-token.json` so the sidecar can re-attach
 	 *  after a deck restart without the deck re-minting. */
@@ -335,6 +344,7 @@ function snapshotState(): GholamState {
 	if (state.startedAt) out.startedAt = state.startedAt;
 	if (state.lastBeatAt) out.lastBeatAt = state.lastBeatAt;
 	if (state.wsPort !== undefined) out.wsPort = state.wsPort;
+	if (state.error) out.error = state.error;
 	return out;
 }
 
@@ -358,11 +368,26 @@ export const gholam = {
 		state.running = true;
 		state.startedAt = new Date().toISOString();
 		state.lastBeatAt = state.startedAt;
+		state.error = undefined;
 		// Reuse a persisted token if the deck restarted but the sidecar
 		// is still using the old one; otherwise mint a fresh one and
 		// write it to disk so the sidecar can read it back via env.
 		state.gholamToken = await currentGholamToken();
-		state.wsPort = await spawnSidecar();
+		try {
+			state.wsPort = await spawnSidecar();
+		} catch (err) {
+			const msg = (err as Error).message ?? String(err);
+			state.error = msg;
+			state.running = false;
+			state.wsPort = undefined;
+			sidecarProc = undefined;
+			state.pid = undefined;
+			clearInterval(heartbeatTimer);
+			heartbeatTimer = undefined;
+			log.warn(`gholam start failed: ${msg}`);
+			void writeState();
+			return snapshotState();
+		}
 		void writeState();
 		scheduleHeartbeat();
 		openGholamWs();
@@ -510,31 +535,57 @@ async function spawnSidecar(): Promise<number> {
 	const containerCandidate = path.resolve(process.cwd(), "..", "gholam", "src", "index.ts");
 	const cwdCandidate = path.join(process.cwd(), "apps", "gholam", "src", "index.ts");
 	const candidate = existsSync(containerCandidate) ? containerCandidate : cwdCandidate;
-	const port = 47_000 + Math.floor(Math.random() * 5_000);
-	if (!existsSync(candidate)) {
-		// Sidecar source not yet present — we ship it later in this turn.
-		// Reserve a port and let the heartbeat loop emit a "missing sidecar"
-		// log line every tick so the user notices.
-		return port;
+	// If the operator pinned a port (e.g. exposed via deploy env), honor it
+	// exactly. Otherwise pick a deterministic default in the
+	// IANA-dynamic/private range (47900 is what apps/gholam/src/index.ts
+	// reads from `GHOLAM_WS_PORT` by default). Deterministic ports make
+	// restarts predictable and let the deck-side handshake know where to
+	// dial without env plumbing.
+	const basePort = Number.parseInt(process.env.OMP_DECK_GHOLAM_PORT ?? "47900", 10);
+	if (!Number.isFinite(basePort) || basePort < 1024 || basePort > 65535) {
+		throw new Error(`OMP_DECK_GHOLAM_PORT=${process.env.OMP_DECK_GHOLAM_PORT} is not a valid port`);
 	}
-	try {
-		const env: Record<string, string> = {
-			...process.env,
-			GHOLAM_WS_PORT: String(port),
-			GHOLAM_DECK_TOKEN: state.gholamToken ?? "",
-		};
+	if (!existsSync(candidate)) {
+		throw new Error(`gholam sidecar source not found at ${candidate} — Dockerfile must COPY apps/gholam`);
+	}
+	const env: Record<string, string> = {
+		...process.env,
+		GHOLAM_WS_PORT: String(basePort),
+		GHOLAM_DECK_TOKEN: state.gholamToken ?? "",
+	};
+	// Try the pinned port, then bump up to 5 times on EADDRINUSE so a
+	// stale sidecar from a prior crash doesn't wedge the deck.
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const port = basePort + attempt;
 		const proc = Bun.spawn({
 			cmd: ["bun", "run", candidate],
-			env,
+			env: { ...env, GHOLAM_WS_PORT: String(port) },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		sidecarProc = proc;
-		state.pid = proc.pid;
-		return port;
-	} catch (err) {
-		log.warn(`gholam sidecar spawn failed; running in stub mode`, err);
-		return port;
+		// Give the sidecar a moment to bind. If it exits cleanly within
+		// 250ms with a stderr line about EADDRINUSE, retry the next port.
+		await new Promise((r) => setTimeout(r, 250));
+		const probe = await Promise.race([
+			proc.exited,
+			new Promise<null>((r) => setTimeout(() => r(null), 0)),
+		]);
+		if (probe === null) {
+			sidecarProc = proc;
+			state.pid = proc.pid;
+			state.error = undefined;
+			return port;
+		}
+		const exitCode = proc.exitCode;
+		const stderr = await new Response(proc.stderr).text();
+		lastError = stderr.trim() || `exit ${exitCode}`;
+		if (!/EADDRINUSE|already in use/i.test(lastError as string)) {
+			// Some other failure (e.g. bad import). Surface immediately.
+			throw new Error(`gholam sidecar exited (port ${port}): ${lastError}`);
+		}
+		log.warn(`gholam: port ${port} busy, retrying on ${port + 1}`);
 	}
+	throw new Error(`gholam sidecar failed to bind on any port in [${basePort}, ${basePort + 4}]: ${lastError}`);
 }
 
 function scheduleHeartbeat(): void {
