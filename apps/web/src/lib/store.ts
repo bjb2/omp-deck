@@ -1275,8 +1275,17 @@ export const selectActiveSession = (s: StoreState): SessionUi | undefined =>
  */
 function readLastSession(): string | undefined {
 	if (typeof localStorage === "undefined") return undefined;
-	const raw = localStorage.getItem("omp-deck:last-session");
-	return raw && raw.length > 0 ? raw : undefined;
+	// Sealed contexts (Safari private mode, embedded webviews with
+	// storage disabled) throw on `getItem` itself, not just on writes.
+	// `readLastSession` runs at module init — a throw here unwinds into
+	// a black-screen cold start, which is the exact "remote
+	// workstation" failure the user is hedging against.
+	try {
+		const raw = localStorage.getItem("omp-deck:last-session");
+		return raw && raw.length > 0 ? raw : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** Persist (or clear) the last active session id across reloads. */
@@ -1292,7 +1301,12 @@ function writeLastSession(id: string | undefined): void {
 
 function readModelSelection(): { provider: string; id: string } | undefined {
 	if (typeof localStorage === "undefined") return undefined;
-	const raw = localStorage.getItem("omp-deck:model-selection");
+	let raw: string | null;
+	try {
+		raw = localStorage.getItem("omp-deck:model-selection");
+	} catch {
+		return undefined;
+	}
 	if (!raw) return undefined;
 	try {
 		const parsed = JSON.parse(raw) as { provider?: string; id?: string };

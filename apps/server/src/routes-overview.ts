@@ -32,6 +32,11 @@ const log = logger("routes:overview");
 const WINDOW_DAYS: Readonly<Record<Window, number>> = { "24h": 1, "7d": 7, "30d": 30 };
 const ACTIVE_TASK_LIMIT = 5;
 const EVENT_LIMIT = 20;
+// Cap on the wire — upstream feed counts vary run-to-run, so pin what
+// the dashboard sees. `fetchAllNews` already sorts by publishedAt desc
+// + de-dupes by URL, so the cap is just the deterministic tail.
+const NEWS_CAP = 30;
+const TRENDING_CAP = 15;
 const STREAK_LOOKBACK_DAYS = 90;
 const SHARP_HOURS_WINDOW_DAYS = 30;
 const SHARP_HOURS_MIN_COUNT = 3;
@@ -298,8 +303,8 @@ async function buildOverview({ inputs }: { inputs: OverviewInputs }): Promise<Ov
 		window: inputs.window,
 		stats,
 		focus,
-		news: newsResult.items,
-		trending: trendingResult.items,
+		news: newsResult.items.slice(0, NEWS_CAP),
+		trending: trendingResult.items.slice(0, TRENDING_CAP),
 		events,
 		receiptsTodayCount: receiptsToday.receipts.length,
 		sharpHours,
