@@ -9,10 +9,22 @@ import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
 import { createAutoTasks, parseTaskCues } from "./auto-kanban.ts";
 const log = logger("ws");
 
+// Per-connection WS frame rate limit (100/sec rolling). 100 is well above
+// any normal UI's worst case (typing, streaming events, bulk subscribe) and
+// well below the volumes a flooded socket produces. See onMessage below.
+const CLIENT_FRAME_RATE_LIMIT = 100;
+const CLIENT_FRAME_WINDOW_MS = 1_000;
+const WS_CLOSE_POLICY_VIOLATION = 1008;
+
 /** Per-connection state. */
 export interface ConnectionData {
 	connectionId: string;
 	subscriptions: Map<string, () => void>;
+	/** Sliding window of client-driven frame receive times (ms). Heartbeat
+	 *  frames are server-pushed, so they're not counted. Used to close
+	 *  abusive connections that exceed CLIENT_FRAME_RATE_PER_SECOND in
+	 *  any rolling 1s window. */
+	frameTimestamps: number[];
 }
 
 /** Default minimum gap between consecutive frames of the same type on the
@@ -82,6 +94,7 @@ export class WsHub {
 		return {
 			connectionId: crypto.randomUUID(),
 			subscriptions: new Map(),
+		frameTimestamps: [],
 		};
 	}
 
@@ -99,6 +112,32 @@ export class WsHub {
 			send(ws, { type: "error", error: "invalid json" });
 			return;
 		}
+
+	// Per-connection rate limit. Heartbeat (`type: "ping"`) is a
+	// keep-alive the client sends — we still count it because floods
+	// of pings are the cheapest way to abuse the socket. A connection
+	// that exceeds CLIENT_FRAME_RATE_LIMIT frames in any 1s window is
+	// closed with 1008 (policy violation).
+	{
+		const now = Date.now();
+		const stamps = ws.data.frameTimestamps;
+		// Drop entries older than the window so the array stays bounded
+		// by the rate limit itself, not by session length.
+		const cutoff = now - CLIENT_FRAME_WINDOW_MS;
+		while (stamps.length > 0 && stamps[0]! < cutoff) stamps.shift();
+		stamps.push(now);
+		if (stamps.length > CLIENT_FRAME_RATE_LIMIT) {
+			log.warn(
+				`ws rate limit exceeded for ${ws.data.connectionId}: ${stamps.length} frames in ${CLIENT_FRAME_WINDOW_MS}ms`,
+			);
+			try {
+				ws.close(WS_CLOSE_POLICY_VIOLATION, "frame rate limit exceeded");
+			} catch {
+				// already closed; nothing to do
+			}
+			return;
+		}
+	}
 
 		// Gholam permission gate: only `gholam_command` frames are gated.
 		// Missing/empty requiredPermissions is a no-op (no gating needed).
@@ -165,6 +204,10 @@ export class WsHub {
 
 	onClose(ws: ServerWebSocket<ConnectionData>): void {
 		this.connections.delete(ws);
+		// Drop the bucket so a re-allocated ConnectionData object on
+		// the same ws.data slot (rare, but possible across reconnects)
+		// starts from zero rather than inheriting a stale window.
+		ws.data.frameTimestamps.length = 0;
 		const subs = ws.data.subscriptions;
 		const connectionId = ws.data.connectionId;
 		log.debug(`close ${connectionId} subs=${subs.size}`);

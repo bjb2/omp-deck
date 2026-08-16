@@ -20,10 +20,29 @@ import type {
 	WorkspaceEntry,
 } from "@omp-deck/protocol";
 
+import { resolvePrincipal } from "./auth/guard.ts";
+import { getAuthConfig } from "./auth/config.ts";
+import { countUsers } from "./auth/store.ts";
+import { logger } from "./log.ts";
+import { guardWorkspacePath } from "./path-guard.ts";
 import { isCwdAllowed } from "./routes-fs.ts";
 
+const log = logger("routes:workspaces");
+
+// Mirrors `isAdminPrincipal` in routes-llm.ts — workspace registration
+// mutates server-wide state (the extraWorkspaces list is read on every
+// GET /api/workspaces and every file autocomplete request), so only
+// user principals may register one.
+function isAdminPrincipal(req: Request): boolean {
+	const cfg = getAuthConfig();
+	const principal = resolvePrincipal(req, cfg);
+	if (!principal) return false;
+	if (countUsers() === 0) return principal.kind === "user";
+	return principal.kind === "user";
+}
+
 // Module-level mutable list. Initialized empty here; `routes.ts` seeds it
-// from Config at startup via `seedExtraWorkspaces()`. Both endpoints read
+// from `Config` at startup via `seedExtraWorkspaces()`. Both endpoints read
 // and write this same array so a register() takes effect for the next
 // GET /api/workspaces immediately.
 export const extraWorkspaces: string[] = [];
@@ -44,6 +63,9 @@ export function buildWorkspacesRouter(): Hono {
 	const app = new Hono();
 
 	app.post("/workspaces/register", async (c) => {
+		if (!isAdminPrincipal(c.req.raw)) {
+			return c.json({ error: "admin required" }, 403);
+		}
 		let body: RegisterWorkspaceRequest;
 		try {
 			body = (await c.req.json()) as RegisterWorkspaceRequest;
@@ -60,6 +82,11 @@ export function buildWorkspacesRouter(): Hono {
 		// Already-registered is a no-op (idempotent) rather than 4xx — the
 		// picker may retry on flaky WS reconnects.
 		if (!extraWorkspaces.includes(cwd)) extraWorkspaces.push(cwd);
+		// SECURITY-029: log who registered the workspace. We re-resolve the
+		// principal once and narrow before touching `.user`.
+		const principal = resolvePrincipal(c.req.raw, getAuthConfig());
+		const username = principal?.kind === "user" ? principal.user.username : "unknown";
+		log.info(`workspace registered: ${cwd} by ${username}`);
 		const workspace: WorkspaceEntry = {
 			cwd,
 			label: deriveLabel(cwd),

@@ -4,6 +4,7 @@
   "title": "RoutineStep — http",
   "description": "HTTP request. Localhost requests automatically get the internal routine-runner bearer token. Templating applied to url, headers, query, and body.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {
@@ -14,8 +15,7 @@
         "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
         "url": {
           "type": "string",
-          "format": "uri-reference",
-          "description": "Templated."
+          "description": "Templated. Note: Validated by the HTTP layer at runtime, not by Ajv."
         },
         "headers": {
           "type": "object",

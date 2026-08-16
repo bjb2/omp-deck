@@ -223,6 +223,31 @@ export async function stageImport(zipBuffer: Buffer, mode: "merge" | "full-reset
 	const extractDir = path.join(stagingPath, "extracted");
 	await fs.mkdir(extractDir, { recursive: true });
 
+	// Validate every entry resolves inside `extractDir` BEFORE extracting.
+	// `unzip -Z1` prints one archive member per line (no quoting, no
+	// headers) — feed it through `path.resolve` against the extract root
+	// and reject the import if any entry escapes. Closes zip-slip.
+	const listProc = Bun.spawn(["unzip", "-Z1", zipTmp], { stdout: "pipe", stderr: "pipe" });
+	const listText = await new Response(listProc.stdout).text();
+	const listStderr = await new Response(listProc.stderr).text();
+	const listExit = await listProc.exited;
+	if (listExit !== 0) {
+		await fs.rm(zipTmp, { force: true });
+		await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
+		throw new ImportError(`could not list archive: ${listStderr.trim() || "not a valid zip"}`);
+	}
+	const extractAbs = path.resolve(extractDir);
+	for (const rawEntry of listText.split(/\r?\n/)) {
+		const entry = rawEntry.replace(/\/$/, "");
+		if (!entry) continue;
+		const target = path.resolve(extractAbs, entry);
+		if (target !== extractAbs && !target.startsWith(extractAbs + path.sep)) {
+			await fs.rm(zipTmp, { force: true });
+			await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
+			throw new ImportError(`archive entry escapes staging dir: ${entry}`);
+		}
+	}
+
 	const proc = Bun.spawn(["unzip", "-q", "-o", zipTmp, "-d", extractDir], { stdout: "pipe", stderr: "pipe" });
 	const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
 	await fs.rm(zipTmp, { force: true });

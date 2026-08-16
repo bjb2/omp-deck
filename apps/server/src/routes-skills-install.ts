@@ -20,6 +20,7 @@ import { Hono } from "hono";
 
 import { loadConfig } from "./config.ts";
 import { logger } from "./log.ts";
+import { guardWorkspacePath } from "./path-guard.ts";
 
 const log = logger("routes:skills-install");
 
@@ -41,7 +42,13 @@ function safeName(raw: string): string | undefined {
 
 function resolveTargetDir(name: string, scope: "user" | "project", cwd?: string): string {
 	if (scope === "project") {
-		const base = cwd?.trim() || process.cwd();
+		const rawBase = cwd?.trim() || process.cwd();
+		// Project scope writes `<cwd>/.omp/skills/<name>`. The cwd comes
+		// from the client — confine it through the shared workspace guard
+		// so it can never escape an allowed root, and fall back to
+		// process.cwd() only after the guard admits it.
+		const guard = guardWorkspacePath(rawBase);
+		const base = guard.ok && guard.resolved ? guard.resolved : process.cwd();
 		return path.join(base, ".omp", "skills", name);
 	}
 	const agentDir = loadConfig().agentDir ?? path.join(os.homedir(), ".omp", "agent");
@@ -50,6 +57,31 @@ function resolveTargetDir(name: string, scope: "user" | "project", cwd?: string)
 
 async function fetchSource(source: string): Promise<string> {
 	if (!/^https?:\/\//i.test(source)) return source;
+	// SECURITY-002 (SSRF guard): refuse loopback, private networks, link-local,
+	// and metadata IPs. Without this, an authed caller can hit the deck's own
+	// loopback-only API endpoints (which the auth gate skips because the
+	// request looks internal) or cloud-instance metadata services.
+	const url = new URL(source);
+	if (url.protocol !== "https:" && url.protocol !== "http:") {
+		throw new Error(`unsupported scheme: ${url.protocol}`);
+	}
+	const hostname = url.hostname.toLowerCase();
+	const denyPatterns = [
+		/^localhost$/i,
+		/^127\./,
+		/^0\.0\.0\.0$/,
+		/^10\./,
+		/^172\.(1[6-9]|2\d|3[01])\./,
+		/^192\.168\./,
+		/^169\.254\./,
+		/^::1$/,
+		/^fe80:/i,
+		/^fc[0-9a-f]{2}:/i,
+		/^fd[0-9a-f]{2}:/i,
+	];
+	if (denyPatterns.some((re) => re.test(hostname))) {
+		throw new Error(`refusing to fetch from non-public host: ${hostname}`);
+	}
 	const res = await fetch(source);
 	if (!res.ok) throw new Error(`source download failed (HTTP ${res.status})`);
 	return await res.text();

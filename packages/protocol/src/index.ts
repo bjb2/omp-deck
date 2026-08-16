@@ -24,6 +24,7 @@ export type { GholamPermission } from "./permissions";
 // Local imports for the gholam text-suggestion frames so the ServerFrame /
 // ClientFrame unions below can reference them by short name. The re-export
 // below does NOT make the names available to in-file type references.
+import type { GholamPermission } from "./permissions";
 import type {
 	GholamTextSuggestion,
 	GholamTextSuggestFrame,
@@ -1003,7 +1004,6 @@ export interface GholamCommandFrame {
 	type: "gholam_command";
 	method: string;
 	requiredPermissions?: GholamPermissionKey[];
-	[key: string]: unknown;
 }
 
 /**
@@ -1012,7 +1012,7 @@ export interface GholamCommandFrame {
  * protocol package stays free of sidecar-imports — the sidecar module is
  * the source of truth at runtime.
  */
-export type GholamPermissionKey = string;
+export type GholamPermissionKey = GholamPermission;
 
 /** Client → Server. Augmented with `gholam_command` for the gholam
  *  permissions gate. Same union pattern as `ServerFrame`. */

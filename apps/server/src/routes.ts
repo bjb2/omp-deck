@@ -102,6 +102,45 @@ export function buildRouter(
 ): Hono {
 	const app = new Hono();
 
+	// Hard cap on request body size. Most endpoints deal with small
+	// JSON messages; a 4MB ceiling is well above any legitimate body
+	// and far below what a request-flood attack can push at a per-
+	// socket Hono handler. Routes that genuinely need larger payloads
+	// (pasted-image uploads, full agent-config tarballs) opt out via
+	// URL prefix matching against `LARGE_BODY_BYPASS_PREFIXES` below.
+	// Mounted as the FIRST middleware so it rejects before auth or
+	// routing cost.
+	const MAX_BODY_BYTES = 4 * 1024 * 1024;
+	const LARGE_BODY_BYPASS_PREFIXES = ["/api/uploads/", "/api/agent-config/import"];
+	app.use("*", async (c, next) => {
+		const method = c.req.method.toUpperCase();
+		// Only methods that carry a body. GET/HEAD/OPTIONS never have
+		// request bodies that consume server memory, so they're outside
+		// this guard.
+		if (method !== "POST" && method !== "PUT" && method !== "PATCH" && method !== "DELETE") {
+			return next();
+		}
+		const path = c.req.path;
+		if (LARGE_BODY_BYPASS_PREFIXES.some((p) => path.startsWith(p))) {
+			return next();
+		}
+		const lenStr = c.req.header("content-length");
+		if (lenStr) {
+			const len = Number(lenStr);
+			if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
+				return c.json(
+					{ error: "payload too large", limit: MAX_BODY_BYTES, received: len },
+					413,
+				);
+			}
+		}
+		// No Content-Length header (chunked) — let it through; Hono's
+		// downstream handlers can stream-read and bound their own reads.
+		// The known-attack surface is forged Content-Length on hostile
+		// clients, which this middleware just caught.
+		return next();
+	});
+
 	app.get("/health", (c) => {
 		const info = getBuildInfo();
 		return c.json({

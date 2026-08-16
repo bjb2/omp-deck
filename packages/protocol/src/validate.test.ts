@@ -476,3 +476,377 @@ describe("validateRoutineSpec — layout (V2 canvas)", () => {
 		expect(hasVersionError).toBe(true);
 	});
 });
+
+describe("validateRoutineSpec — step schemas coverage (T6)", () => {
+	describe("step-http", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "http-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "http", method: "GET", url: "http://example.com" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "http-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "http",
+						method: "POST",
+						url: "http://api/{{step.id}}",
+						headers: { Authorization: "Bearer token" },
+						query: { param: "val" },
+						body: '{"foo":"bar"}',
+						expect_json: true,
+						when: "true",
+						on_failure: "continue",
+						timeout_secs: 30,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "http-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "http", method: "GET", url: "http://example.com", extra_field: true }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "http-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "http", url: "http://example.com" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-agent", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "agent-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "agent", prompt: "Hello agent" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "agent-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "agent",
+						prompt: "Do work",
+						model: "claude-sonnet-4-6",
+						structured_output: { schema: { type: "object" }, strict: true },
+						skills_allowed: ["skill-1"],
+						mcp_servers_allowed: ["mcp-1"],
+						when: "true",
+						on_failure: "abort",
+						timeout_secs: 120,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "agent-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "agent", prompt: "Do work", invalid_prop: "bad" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "agent-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "agent" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-mcp", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "mcp-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "mcp", server: "srv1", tool: "tool1" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "mcp-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "mcp",
+						server: "srv1",
+						tool: "tool1",
+						args: { arg1: "val1" },
+						when: "true",
+						on_failure: "retry",
+						retry: { times: 3, backoff: "exponential" },
+						timeout_secs: 45,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "mcp-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "mcp", server: "srv1", tool: "tool1", unknown_prop: 123 }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "mcp-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "mcp", server: "srv1" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-transform", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "transform-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "transform", body: "return 42;" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "transform-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "transform",
+						body: "return context.steps.prev.json;",
+						when: "true",
+						on_failure: "continue",
+						timeout_secs: 10,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "transform-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "transform", body: "return 42;", unknown_attr: true }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "transform-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "transform" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-set-state", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "set-state-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "set_state", state: { key: "val" } }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "set-state-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "set_state",
+						state: { key: "val", count: "10" },
+						when: "true",
+						on_failure: "abort",
+						timeout_secs: 5,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "set-state-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "set_state", state: { key: "val" }, extra: "bad" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "set-state-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "set_state" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-write", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "write-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "write", path: "out.txt", content: "hello" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "write-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "write",
+						path: "logs/app.log",
+						content: "log line\n",
+						append: true,
+						when: "true",
+						on_failure: "continue",
+						timeout_secs: 15,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "write-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "write", path: "out.txt", content: "hello", illegal_prop: 1 }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "write-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "write", path: "out.txt" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+
+	describe("step-run", () => {
+		test("valid minimal", () => {
+			const spec: RoutineSpec = {
+				name: "run-minimal",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "run", command: "echo hello" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("valid full", () => {
+			const spec: RoutineSpec = {
+				name: "run-full",
+				trigger: [{ manual: {} }],
+				steps: [
+					{
+						id: "step1",
+						type: "run",
+						command: "npm test",
+						cwd: "./app",
+						when: "true",
+						on_failure: "abort",
+						timeout_secs: 60,
+					},
+				],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(true);
+		});
+
+		test("unknown field rejected", () => {
+			const spec = {
+				name: "run-unknown",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "run", command: "echo hello", unexpected_flag: true }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+
+		test("missing required", () => {
+			const spec = {
+				name: "run-missing",
+				trigger: [{ manual: {} }],
+				steps: [{ id: "step1", type: "run" }],
+			};
+			const res = validateRoutineSpec(spec);
+			expect(res.valid).toBe(false);
+		});
+	});
+});

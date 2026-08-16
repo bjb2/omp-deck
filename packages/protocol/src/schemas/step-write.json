@@ -4,6 +4,7 @@
   "title": "RoutineStep — write",
   "description": "Write or append a file. Path and content are templated.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

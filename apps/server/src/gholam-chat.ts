@@ -16,7 +16,11 @@
  * `gholam.edit()` path keeps using the `gholam.ts` sidecar frame; only the
  * chat runtime loop runs tools inline.
  */
-import type { GholamChatMessage } from "@omp-deck/protocol";
+import {
+	GHOLAM_PERMISSIONS,
+	type GholamChatMessage,
+	type GholamPermissionKey,
+} from "@omp-deck/protocol";
 
 import { broadcastBus } from "./broadcast-bus.ts";
 import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
@@ -249,7 +253,14 @@ export async function runGholamChat(chatId: string, signal: AbortSignal): Promis
 			for (const tc of toolCalls) {
 				if (signal.aborted) break;
 				persistToolCall(chatId, tc);
-				const perm = await checkGholamFramePermissions(tc.requiredPermissions ?? []);
+			// ToolCall.requiredPermissions is `string[]` over the protocol
+			// boundary; the gate accepts GholamPermissionKey[]. Filter to
+			// the known set so unknown strings fail closed (gate rejects
+			// anything not in the registry, see gholam-permissions.ts).
+			const required = (tc.requiredPermissions ?? []).filter(
+				(p): p is GholamPermissionKey => (Object.keys(GHOLAM_PERMISSIONS) as string[]).includes(p),
+			);
+			const perm = await checkGholamFramePermissions(required);
 				if (!perm.ok) {
 					const denied = persistToolResult(chatId, tc, {
 						ok: false,

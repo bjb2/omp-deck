@@ -21,6 +21,7 @@ import type { ResolvedDeckModel } from "./llm-registry.ts";
 import { getDeckLLMRegistry, gholamDeckLLM, type LlmChunk } from "./llm-registry.ts";
 
 import { resolvePrincipal } from "./auth/guard.ts";
+import { isAdminPrincipal } from "./auth/guard.ts";
 import { getAuthConfig } from "./auth/config.ts";
 import { countUsers } from "./auth/store.ts";
 import { logger } from "./log.ts";
@@ -43,17 +44,8 @@ export function __setCompleteStreamForTests(fn: CompleteStream | null): void {
 const TEST_TIMEOUT_MS = 8_000;
 const PROBE_PROMPT = "ping";
 
-function isAdminPrincipal(req: Request): boolean {
-	const cfg = getAuthConfig();
-	const principal = resolvePrincipal(req, cfg);
-	if (!principal) return false;
-	// Only user principals count as admins; api-token / internal callers
-	// don't get the smoke-test endpoint. countUsers() === 0 means first-run
-	// setup hasn't happened — in that case gate is loose and the first
-	// registering user is the admin.
-	if (countUsers() === 0) return principal.kind === "user";
-	return principal.kind === "user";
-}
+// isAdminPrincipal now lives in ./auth/guard.ts so /api/settings/env can
+// share the same gate (SECURITY-004). Local copy removed.
 
 function unauthorized(): Response {
 	return Response.json({ error: "admin required" }, { status: 403 });

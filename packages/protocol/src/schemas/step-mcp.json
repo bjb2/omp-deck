@@ -4,6 +4,7 @@
   "title": "RoutineStep — mcp",
   "description": "Deterministic MCP tool call. The named server must be installed via /mcp install. Args are validated against the tool's input schema (cached from tools/list) at runtime before invocation.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

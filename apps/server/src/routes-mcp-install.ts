@@ -168,6 +168,41 @@ export function buildMcpInstallRouter(): Hono {
 			return c.json({ ok: false, error: "stdio server requires command" }, 400);
 		}
 
+		// SECURITY-003: MCP stdio commands are written verbatim into
+		// ~/.omp/agent/mcp.json and spawned by gholam-mcp-runtime with the deck's
+		// full env. Without this guard, an authed caller can persist
+		// `command: "bash"` or `command: "/bin/sh"` and pivot to arbitrary code
+		// execution. Refuse shell interpreters outright and shell metacharacters
+		// in the command path; the runtime layer handles arg safety.
+		if (isStdio) {
+		const cmd = cfg.command!.trim();
+		const base = cmd.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+		const SHELL_INTERPRETERS: Record<string, true> = {
+			sh: true,
+			bash: true,
+			dash: true,
+			zsh: true,
+			fish: true,
+			"cmd.exe": true,
+			"powershell.exe": true,
+			pwsh: true,
+			"powershell": true,
+		};
+		if (SHELL_INTERPRETERS[base] === true) {
+			return c.json(
+				{ ok: false, error: `stdio command "${cmd}" is a shell interpreter; not allowed` },
+				400,
+			);
+		}
+		const META = /[;&|`$<>\\]/;
+		if (META.test(cmd)) {
+			return c.json(
+				{ ok: false, error: `stdio command contains shell metacharacters; not allowed` },
+				400,
+			);
+		}
+		}
+
 		const entry: McpServerEntry = isHttp
 			? {
 					type: "http",

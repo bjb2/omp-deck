@@ -15,6 +15,7 @@
 import { guardWorkspacePath } from "./path-guard.ts";
 import { tryGetToken } from "./github-service.ts";
 import { logger } from "./log.ts";
+import { gitSpawnEnv } from "./spawn-env.ts";
 
 const log = logger("git-service");
 
@@ -38,7 +39,10 @@ async function run(cwd: string, args: string[], opts: { input?: string; timeoutM
 		stdin: opts.input !== undefined ? "pipe" : "ignore",
 		stdout: "pipe",
 		stderr: "pipe",
-		env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, // never hang waiting for interactive auth
+		// SECURITY-030: git gets GITHUB_TOKEN for credentialed ops but no
+		// provider keys, no MCP tokens, no routine secrets. Spawn allow-list
+		// lives in apps/server/src/spawn-env.ts.
+		env: { ...gitSpawnEnv(), GIT_TERMINAL_PROMPT: "0" },
 	});
 	if (opts.input !== undefined && proc.stdin) {
 		proc.stdin.write(opts.input);

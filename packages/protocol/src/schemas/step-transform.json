@@ -4,6 +4,7 @@
   "title": "RoutineStep — transform",
   "description": "Pure-JS expression over the run context. Evaluated in a quickjs sandbox; no network, no fs, no timers > 100ms wall clock. Result captured to steps.<id>.json.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

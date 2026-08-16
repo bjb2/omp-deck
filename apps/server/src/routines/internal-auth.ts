@@ -12,6 +12,10 @@
  * routine runner (which runs in-process with the rest of the server) can hit
  * its own API without round-tripping a session cookie. The middleware checks
  * BOTH the HMAC AND the runId being present + plausible.
+ *
+ * SECURITY-028: the secret is held in a module-scoped variable, never written
+ * to process.env. The previous implementation set process.env[ENV_KEY] which
+ * leaked the secret into every spawn (shell, run step, git, bridge).
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -29,13 +33,11 @@ function getSecret(): string {
 		cachedSecret = existing;
 		return existing;
 	}
-	// First-boot: mint and stash in-process. Persisting it across restarts is
-	// nice-to-have (avoids invalidating in-flight runs across a bounce) but
-	// not required — in-flight runs die on restart anyway.
-	const fresh = randomBytes(32).toString("hex");
-	process.env[ENV_KEY] = fresh;
-	cachedSecret = fresh;
-	return fresh;
+	// First-boot: mint and stash in-process (module-scoped only — never
+	// process.env). Persisting across restarts is nice-to-have but not
+	// required — in-flight runs die on restart anyway.
+	cachedSecret = randomBytes(32).toString("hex");
+	return cachedSecret;
 }
 
 /** Compute the token bound to a specific runId. */

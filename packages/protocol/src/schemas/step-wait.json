@@ -4,6 +4,7 @@
   "title": "RoutineStep — wait",
   "description": "Pause for a fixed duration. Useful between retries or for spacing API calls.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

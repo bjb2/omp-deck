@@ -820,7 +820,10 @@ export class KbService {
 		const abs = rel ? path.join(this.root, rel) : this.root;
 		const resolved = path.resolve(abs);
 		const rootResolved = path.resolve(this.root);
-		if (!resolved.startsWith(rootResolved)) return undefined;
+		// Sibling `/home/user/kb-x` would pass a plain `startsWith(root)` check
+		// against `/home/user/kb`; require the exact root OR a descendant
+		// segment so path traversal via crafted suffixes can't escape.
+		if (resolved !== rootResolved && !resolved.startsWith(rootResolved + path.sep)) return undefined;
 		return resolved;
 	}
 

@@ -22,6 +22,7 @@ import { resolve as resolvePath } from "node:path";
 
 import { logger } from "./log.js";
 import { guardAgentDirPath, guardWorkspacePath, isWorkspaceDir } from "./path-guard.js";
+import { shellSpawnEnv } from "./spawn-env.ts";
 
 const log = logger("shell");
 
@@ -160,7 +161,9 @@ export const shell = {
 		const proc = Bun.spawn({
 			cmd: buildCommandLine(command),
 			cwd: cwd.cwd,
-			env: process.env,
+			// SECURITY-001: never inherit provider secrets into user shells. The
+			// allow-list (PATH/HOME/TMP/LANG/etc + OMP_DECK_*) lives in spawn-env.ts.
+			env: shellSpawnEnv(),
 			stdin: "pipe",
 			stdout: "pipe",
 			stderr: "pipe",

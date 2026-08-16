@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "bun --hot src/index.ts",
 		"start": "bun src/index.ts",
-		"build": "bun build src/index.ts --target=bun --outdir=dist --minify",
+		"build": "bun build src/index.ts --target=bun --outdir=dist --minify --external omp-legacy-pi-modules",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test"
 	},

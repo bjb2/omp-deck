@@ -26,6 +26,8 @@ import {
 } from "./env-store.ts";
 import { setLogLevel } from "./log.ts";
 import type { AgentBridge } from "./bridge/types.ts";
+import { guardWorkspacePath } from "./path-guard.ts";
+import { isAdminPrincipal } from "./auth/guard.ts";
 
 export function buildSettingsRouter(
 	bridge: AgentBridge,
@@ -55,6 +57,12 @@ export function buildSettingsRouter(
 	});
 
 	app.patch("/settings/env", async (c) => {
+		// SECURITY-004: env mutations can rotate provider keys, the deck API
+		// token, MCP secrets. Any authed user was previously able to clobber
+		// them. Gate behind admin principal — mirror routes-llm.ts:isAdminPrincipal.
+		const access = isAdminPrincipal(c.req.raw);
+		if (!access) return c.json({ error: "admin required" }, 403);
+
 		let body: PatchEnvSettingsRequest;
 		try {
 			body = (await c.req.json()) as PatchEnvSettingsRequest;
@@ -104,8 +112,19 @@ export function buildSettingsRouter(
 		if (!cwd) {
 			return c.json({ ok: false, path: "" }, 400);
 		}
+		const guard = guardWorkspacePath(cwd, { mustExist: true });
+		if (!guard.ok) {
+			return c.json({ ok: false, path: "" }, 400);
+		}
 		try {
-			const hookDir = path.join(cwd, ".git", "hooks");
+			const gitDir = path.join(cwd, ".git");
+			// The hook lives inside an existing repo, not into a freshly
+			// created folder — refuse the install rather than fabricating
+			// a `.git` tree on the caller's behalf.
+			if (!fs.existsSync(gitDir)) {
+				return c.json({ ok: false, path: "" }, 400);
+			}
+			const hookDir = path.join(gitDir, "hooks");
 			fs.mkdirSync(hookDir, { recursive: true });
 			const hookPath = path.join(hookDir, "pre-commit");
 			const script = `#!/bin/sh

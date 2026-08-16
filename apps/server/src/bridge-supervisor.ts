@@ -5,6 +5,7 @@ import type { BridgeInfo, BridgeLogLine, BridgeName, BridgeStatus } from "@omp-d
 
 import { logger } from "./log.ts";
 import { resolveBunExecutable } from "./runtime-bun.ts";
+import { bridgeSpawnEnv } from "./spawn-env.ts";
 
 const log = logger("bridges");
 
@@ -107,7 +108,11 @@ export class BridgeSupervisor {
 				// falls back to a PATH lookup.
 				cmd: [resolveBunExecutable(), t.spec.entry],
 				cwd: path.dirname(t.spec.entry),
-				env: { ...process.env } as Record<string, string>,
+				// SECURITY-019: bridges inherit only what they declare. The
+				// default allow-list carries the deck API token + agent dir;
+				// spec.requiredEnv adds per-bridge keys (e.g. TELEGRAM_BOT_TOKEN).
+				// Anything else — provider keys, MCP tokens — is dropped here.
+				env: bridgeSpawnEnv(t.spec.requiredEnv),
 				stdin: "ignore",
 				stdout: "pipe",
 				stderr: "pipe",

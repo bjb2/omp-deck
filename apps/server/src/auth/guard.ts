@@ -24,6 +24,7 @@
  * and serving it anonymously is what lets the login screen exist at all.
  */
 import type { AuthConfig } from "./config.ts";
+import { getAuthConfig } from "./config.ts";
 import { verifyInternalToken } from "../routines/internal-auth.ts";
 import {
 	type DeckSession,
@@ -191,4 +192,18 @@ export function unauthorizedResponse(reason: string, status = 401): Response {
 		status,
 		headers: { "content-type": "application/json; charset=utf-8" },
 	});
+}
+
+/**
+ * SECURITY-004 / admin gate: true when the request carries a user principal.
+ *
+ * API tokens and the routine-runner internal token don't count — those are
+ * non-interactive callers and shouldn't be able to mutate env or provider
+ * keys. First-run setup (`countUsers() === 0`) still lets the very first
+ * user-registering caller through so the deck can bootstrap.
+ */
+export function isAdminPrincipal(req: Request): boolean {
+	const principal = resolvePrincipal(req, getAuthConfig());
+	if (!principal) return false;
+	return principal.kind === "user";
 }

@@ -9,6 +9,7 @@ import type {
 } from "@omp-deck/protocol";
 
 import { logger } from "./log.ts";
+import { guardWorkspacePath } from "./path-guard.ts";
 
 const log = logger("fs-complete");
 
@@ -276,20 +277,7 @@ function score(entries: InventoryEntry[], rawQ: string, limit: number): Inventor
 // ─── Sandboxing ────────────────────────────────────────────────────────────
 
 export function isCwdAllowed(cwd: string): boolean {
-	// Only allow cwds under the user's home directory. The deck is loopback-
-	// only, but a buggy client shouldn't be able to probe `C:\Windows\System32`.
-	const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-	if (!home) return false;
-	try {
-		const resolved = path.resolve(cwd);
-		const homeResolved = path.resolve(home);
-		const rel = path.relative(homeResolved, resolved);
-		if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
-		// Reject if cwd doesn't actually exist on disk — fail closed.
-		return existsSync(resolved) && statSync(resolved).isDirectory();
-	} catch {
-		return false;
-	}
+	return guardWorkspacePath(cwd, { mustExist: true }).ok;
 }
 
 function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {

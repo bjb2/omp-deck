@@ -62,6 +62,14 @@ export { setLatestDeployState, getLatestDeployState } from "./deploy-state.ts";
 // `reload_available` frame so the client can soft-reload with the new
 // bundle. Falls back to a full ?v= reload if the soft path is unavailable.
 let lastBundleHash: string | undefined;
+// Tracks in-flight fetch handlers so `safeShutdown` can wait for them to
+// drain before forcing `server.stop(true)` — otherwise an in-progress
+// upstream call (`router.fetch(...)` -> SDK agent RPC) would be cut
+// mid-await and the client would see a connection-reset rather than a
+// graceful response. Capped at the number of concurrent connections
+// Bun will accept, which is far below the WS rate limit so memory
+// pressure is not a concern.
+const inFlight = new Set<Promise<unknown>>();
 function watchBundle(distDir: string | undefined, hub: { broadcast: (frame: { type: "reload_available"; bundleHash: string; ts: number }) => void }): void {
 	if (!distDir) return;
 	const indexHtml = path.join(distDir, "index.html");
@@ -241,6 +249,7 @@ async function main(): Promise<void> {
 				url.pathname === "/ws" ||
 				url.pathname.startsWith("/api/") ||
 				url.pathname.startsWith("/uploads/") ||
+				url.pathname.startsWith("/hooks/") ||
 				// Completing a provider sign-in writes credentials into the agent's
 				// auth store, so the landing alias is gated like the API it proxies.
 				url.pathname === "/oauth/callback";
@@ -258,7 +267,7 @@ async function main(): Promise<void> {
 					// logic needs to tell "signed out" from "server down".
 					return unauthorizedResponse(
 						needsFirstRunSetup()
-							? "This deck has no account yet. Open it in a browser to finish setup."
+							? "This deck has no account yet. Open it in this browser to finish setup."
 							: "Sign in to use the deck.",
 					);
 				}
@@ -274,7 +283,15 @@ async function main(): Promise<void> {
 			if (url.pathname.startsWith("/api/")) {
 				const trimmed = new URL(req.url);
 				trimmed.pathname = url.pathname.slice(4) || "/";
-				return router.fetch(new Request(trimmed.toString(), req));
+				// Track in-flight router work so safeShutdown can drain
+				// it. The promise removes itself from the set in its own
+				// finally — a throw or hang still cleans up.
+				const work = Promise.resolve().then(() =>
+					router.fetch(new Request(trimmed.toString(), req)),
+				);
+				inFlight.add(work);
+				work.finally(() => inFlight.delete(work));
+				return work as unknown as Promise<Response>;
 			}
 
 			// Short alias for the OAuth landing route. A provider redirect that
@@ -285,7 +302,12 @@ async function main(): Promise<void> {
 			if (url.pathname === "/oauth/callback") {
 				const rewritten = new URL(req.url);
 				rewritten.pathname = "/auth/oauth/callback";
-				return router.fetch(new Request(rewritten.toString(), req));
+				const work = Promise.resolve().then(() =>
+					router.fetch(new Request(rewritten.toString(), req)),
+				);
+				inFlight.add(work);
+				work.finally(() => inFlight.delete(work));
+				return work as unknown as Promise<Response>;
 			}
 
 			// Pasted-image uploads. The uploads route returns URLs rooted at
@@ -338,6 +360,34 @@ async function main(): Promise<void> {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		log.info(`shutdown via ${reason}`);
+		// Drain in-flight HTTP work before tearing down the router.
+		// `server.stop(true)` (called from the signal handlers right
+		// after this returns) closes the listening socket immediately
+		// — any handler still mid-await on router.fetch would be cut
+		// off, surfacing as a connection-reset to the caller. Give
+		// them up to 10s to finish naturally. `allSettled` so a slow
+		// failing handler doesn't prevent shutdown entirely; the
+		// remaining ones are reaped when `server.stop(true)` runs.
+		const drainDeadlineMs = 10_000;
+		const drainStart = Date.now();
+		const inflightSnapshot = Array.from(inFlight);
+		if (inflightSnapshot.length > 0) {
+			log.info(`draining ${inflightSnapshot.length} in-flight request(s) before shutdown`);
+			await Promise.race([
+				Promise.allSettled(inflightSnapshot),
+				new Promise<void>((resolve) => setTimeout(resolve, drainDeadlineMs)),
+			]);
+			const elapsedMs = Date.now() - drainStart;
+			const stillPending = inFlight.size;
+			if (stillPending > 0) {
+				log.warn(
+					`drain reached ${drainDeadlineMs}ms with ${stillPending} request(s) still in-flight; ` +
+						`elapsed=${elapsedMs}ms — proceeding with shutdown`,
+				);
+			} else {
+				log.info(`drain complete in ${elapsedMs}ms`);
+			}
+		}
 		try {
 			routinesRunner.dispose();
 		} catch (err) {

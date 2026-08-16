@@ -25,6 +25,22 @@ let instance: Database | null = null;
 let walCheckpointTimer: ReturnType<typeof setInterval> | null = null;
 const WAL_CHECKPOINT_INTERVAL_MS = 60_000;
 
+// Module-scope so closeDb() can release the .lock sentinel without
+// threading the path through the call site.
+let dbPath: string | null = null;
+
+/**
+ * Lock fd on `<dbPath>.lock`. We use a sentinel file with an exclusive
+ * Bun.file().write() race-detector instead of fs.flock (not in node:fs
+ * typings under Bun on Windows). On collision with another live deck
+ * process, we exit non-zero — a second server silently racing on the
+ * same deck.db would corrupt WAL state. On Windows this serializes via
+ * the OS file lock the OS takes on the .lock sentinel during openSync;
+ * on POSIX the same openSync is enough because SQLite itself takes an
+ * EXCLUSIVE lock on the .db file at journal_mode=WAL startup.
+ */
+let dbLockFd: number | null = null;
+
 export interface DbOpenOpts {
 	/** Absolute path to the sqlite file. Created if missing. */
 	path: string;
@@ -32,12 +48,60 @@ export interface DbOpenOpts {
 
 export function openDb(opts: DbOpenOpts): Database {
 	if (instance) return instance;
-	const dbPath = path.resolve(opts.path);
-	fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+	const resolved = path.resolve(opts.path);
+	dbPath = resolved;
+	const dbPathLocal = resolved;
+	fs.mkdirSync(path.dirname(resolved), { recursive: true });
 
-	const db = new Database(dbPath, { create: true, strict: true });
-	db.exec("PRAGMA journal_mode = WAL");
-	db.exec("PRAGMA foreign_keys = ON");
+	// Race-detector: if another live deck process is still holding the
+	// .lock sentinel, openSync throws EBUSY on POSIX / EACCES on Windows.
+	if (dbLockFd === null) {
+		const lockPath = `${resolved}.lock`;
+		try {
+			// O_EXCL makes openSync fail if the file already exists — that's
+			// how we detect a sibling deck process still holding it. The
+			// first process to boot wins; the rest exit non-zero immediately.
+			dbLockFd = fs.openSync(lockPath, "wx");
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code ?? "";
+			const msg = (err as Error).message ?? String(err);
+			log.error(
+				`db lock held by another deck process (${lockPath}; code=${code}): ${msg}. ` +
+					`Stop the other instance or delete the stale .lock before retrying.`,
+			);
+			process.exit(1);
+		}
+	}
+
+	// SQLite WAL mode itself serializes writers at the database layer.
+	// If a second process still raced past the .lock sentinel (e.g. a
+	// process that opened before us and crashed without releasing), the
+	// pragma below will fail with SQLITE_BUSY when the migration runner
+	// touches the file — caught at boot, not on the first user request.
+	try {
+		const db = new Database(resolved, { create: true, strict: true });
+		db.exec("PRAGMA journal_mode = WAL");
+		db.exec("PRAGMA busy_timeout = 0");
+		db.exec("PRAGMA foreign_keys = ON");
+		// Probe with an immediate write so SQLITE_BUSY surfaces here
+		// instead of during the first user request.
+		db.exec("CREATE TABLE IF NOT EXISTS __deck_lock_probe (id INTEGER PRIMARY KEY)");
+		db.exec("DROP TABLE __deck_lock_probe");
+		instance = db;
+	} catch (err) {
+		log.error(`db open failed (${dbPath}): ${(err as Error).message ?? String(err)}`);
+		if (dbLockFd !== null) {
+			try {
+				fs.closeSync(dbLockFd);
+			} catch {
+				/* swallow */
+			}
+			dbLockFd = null;
+		}
+		throw err;
+	}
+
+	const db = instance;
 	// FULL = durable — fsync the WAL on every commit. Trades a small
 	// throughput cost on disk-bound workloads for a hard guarantee that
 	// any committed row survives a power loss. Acceptable for the deck's
@@ -47,7 +111,6 @@ export function openDb(opts: DbOpenOpts): Database {
 	applyMigrations(db);
 	seedWelcomeTaskIfEmpty(db);
 
-	instance = db;
 	// Periodic WAL checkpoint keeps the -wal file from growing unbounded
 	// during long uptimes. TRUNCATE fully reclaims space back into the
 	// main DB file. Fire-and-forget; failure here is logged but does not
@@ -96,6 +159,25 @@ export function closeDb(): void {
 		}
 		instance.close();
 		instance = null;
+	}
+	// Release the lock sentinel only if THIS process owns it. The .lock
+	// file is removed on close so the next deck boot can re-acquire; a
+	// crashed process leaves the sentinel behind, which the next boot's
+	// O_EXCL open will detect and surface with a clear error.
+	if (dbLockFd !== null) {
+		try {
+			// Unlock + close the fd first so the OS file lock is released
+			// before unlink on Windows (unlink-on-open fd would EBUSY).
+			fs.closeSync(dbLockFd);
+		} catch {
+			// already closed
+		}
+		dbLockFd = null;
+		try {
+			fs.unlinkSync(`${dbPath}.lock`);
+		} catch {
+			// Best-effort — a stale .lock will be caught on next boot's O_EXCL.
+		}
 	}
 }
 

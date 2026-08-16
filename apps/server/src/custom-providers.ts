@@ -67,6 +67,38 @@ export interface CustomProvidersFile {
 
 const EMPTY_FILE: CustomProvidersFile = { version: 1, providers: [] };
 
+// SECURITY-008: apiKeyEnv is operator-controlled (loaded from models.yml or
+// the Settings UI) and was being mirrored verbatim into process.env. A
+// hostile entry could clobber OMP_DECK_API_TOKEN or PATH. Allow-list the
+// shape and refuse collisions with sensitive keys.
+const API_KEY_ENV_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+const API_KEY_ENV_DENY: Record<string, true> = {
+	OMP_DECK_API_TOKEN: true,
+	PATH: true,
+	Path: true,
+	NODE_OPTIONS: true,
+	OMP_DECK_AUTH_SETUP_TOKEN: true,
+	OMP_DECK_AUTH_PASSWORD: true,
+	OMP_DECK_AUTH_SECRET: true,
+	OMP_DECK_INTERNAL_RUNNER_SECRET: true,
+	DECK_INTERNAL_RUNNER_SECRET: true,
+	OMP_DECK_API_BASE: true,
+};
+for (const k of Object.keys(process.env)) {
+	if (k.startsWith("LD_")) API_KEY_ENV_DENY[k] = true;
+}
+
+function validateApiKeyEnv(raw: string | undefined): string | undefined {
+	if (!raw) return undefined;
+	if (!API_KEY_ENV_PATTERN.test(raw)) {
+		throw new Error(`apiKeyEnv "${raw}" must match /^[A-Z][A-Z0-9_]*$/`);
+	}
+	if (API_KEY_ENV_DENY[raw] === true) {
+		throw new Error(`apiKeyEnv "${raw}" is reserved and cannot be mirrored`);
+	}
+	return raw;
+}
+
 export class CustomProvidersRegistry {
 	private filePath: string | undefined;
 	private fileMtime = 0;
@@ -129,6 +161,9 @@ export class CustomProvidersRegistry {
 	}
 
 	async upsertProvider(provider: CustomProvider): Promise<CustomProvidersFile> {
+		// SECURITY-008: validate the apiKeyEnv target before persisting so
+		// a hostile write fails closed at the API boundary, not at apply.
+		validateApiKeyEnv(provider.apiKeyEnv);
 		const file = await this.load();
 		const existing = file.providers.findIndex((p) => p.id === provider.id);
 		if (existing >= 0) file.providers[existing] = provider;
@@ -206,8 +241,9 @@ export class CustomProvidersRegistry {
 				});
 				// Mirror the key into process.env so the SDK resolver finds it
 				// under the conventional name without an extra round trip.
-				if (provider.apiKeyEnv) {
-					process.env[provider.apiKeyEnv] = provider.apiKey;
+				const safeKey = validateApiKeyEnv(provider.apiKeyEnv);
+				if (safeKey) {
+					process.env[safeKey] = provider.apiKey;
 				}
 			} catch (err) {
 				log.warn(`registerProvider(${provider.id}) failed`, err);

@@ -4,6 +4,7 @@
   "title": "RoutineStep — agent",
   "description": "Invoke an omp session with a prompt; capture stdout + structured output. Token counts and cost feed the budget enforcer.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {
