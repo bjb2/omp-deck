@@ -447,6 +447,25 @@ export interface UninstallPluginRequest {
 	scope?: "user" | "project";
 }
 
+/**
+ * Diff row: installed plugin's recorded version lags the catalog version.
+ * Drives the storefront "Update" button + the `/api/marketplace/updates`
+ * polling endpoint.
+ */
+export interface MarketplaceUpdate {
+	id: string; // "name@marketplace"
+	installed: string;
+	available: string;
+}
+
+export interface ListMarketplaceUpdatesResponse {
+	updates: MarketplaceUpdate[];
+}
+
+export interface UpgradePluginRequest {
+	scope?: "user" | "project";
+}
+
 export interface AddMarketplaceRequest {
 	source: string; // url, github "owner/repo", git+url, or absolute local path
 }
@@ -1175,6 +1194,11 @@ type _ServerFrameBase =
 	 * silently under throttle.
 	 */
 	| { type: "mcp_health"; status: McpHealthStatus[] }
+	/**
+	 * Per-MCP-server tool filter changed. Pushed by
+	 * `POST /api/mcp/:name/tools/:tool/toggle` after a successful write.
+	 */
+	| { type: "mcp_tools_changed"; name: string; disabledTools: string[] }
 	/**
 	 * Server-side idle classification. The deck's companion runtime polls
 	 * the bridge for sessions that have been quiet for a while and asks
@@ -2463,6 +2487,48 @@ export interface McpHealthStatus {
 	/** From the last successful tools/list response. */
 	toolCount?: number;
 	probedAt: string;
+}
+
+/**
+ * One tool advertised by an MCP server (the raw `tools/list` payload, minus
+ * server-prefixing). Used by the per-server tool picker.
+ */
+export interface McpToolSpec {
+	name: string;
+	description?: string;
+	inputSchema?: unknown;
+}
+
+/** Response body for `GET /api/mcp/:name/tools`. */
+export interface ListMcpToolsResponse {
+	name: string;
+	tools: McpToolSpec[];
+	disabledTools: string[];
+}
+
+/** Body for `POST /api/mcp/:name/tools/:tool/toggle`. */
+export interface ToggleMcpToolRequest {
+	enabled: boolean;
+}
+
+export interface ToggleMcpToolResponse {
+	name: string;
+	tool: string;
+	enabled: boolean;
+	disabledTools: string[];
+}
+
+/** Flat per-server entry as persisted in `~/.omp/agent/mcp.json`. */
+export interface McpServerEntry {
+	type?: "stdio" | "http";
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+	headers?: Record<string, string>;
+	timeout?: number;
+	enabled?: boolean;
+	disabledTools?: string[];
 }
 
 /** Response body for `GET /api/discovery/search`. */

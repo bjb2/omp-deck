@@ -11,7 +11,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { Hono, type Context } from "hono";
+import type {
+	ListMcpToolsResponse,
+	ToggleMcpToolRequest,
+	ToggleMcpToolResponse,
+} from "@omp-deck/protocol";
 
+import { broadcastBus } from "./broadcast-bus.ts";
+import { listGholamMcpToolsForServer } from "./gholam-mcp-runtime.ts";
 import { loadConfig } from "./config.ts";
 import { logger } from "./log.ts";
 
@@ -33,6 +40,7 @@ interface McpServerEntry {
 	headers?: Record<string, string>;
 	timeout?: number;
 	enabled?: boolean;
+	disabledTools?: string[];
 }
 
 interface McpConfigFile {
@@ -95,6 +103,7 @@ function mergeMcpEntry(prev: McpServerEntry, next: McpServerEntry): McpServerEnt
 		"headers",
 		"timeout",
 		"enabled",
+		"disabledTools",
 	];
 	for (const k of keys) {
 		const v = next[k];
@@ -166,6 +175,7 @@ export function buildMcpInstallRouter(): Hono {
 					...(cfg.headers ? { headers: cfg.headers } : {}),
 					...(cfg.timeout ? { timeout: cfg.timeout } : {}),
 					...(cfg.enabled !== undefined ? { enabled: cfg.enabled } : {}),
+				disabledTools: cfg.disabledTools ?? [],
 				}
 			: {
 					type: "stdio",
@@ -174,6 +184,7 @@ export function buildMcpInstallRouter(): Hono {
 					...(cfg.env ? { env: cfg.env } : {}),
 					...(cfg.timeout ? { timeout: cfg.timeout } : {}),
 					...(cfg.enabled !== undefined ? { enabled: cfg.enabled } : {}),
+				disabledTools: cfg.disabledTools ?? [],
 				};
 
 		try {
@@ -297,6 +308,76 @@ export function buildMcpInstallRouter(): Hono {
 			return c.json({ ok: true, name });
 		} catch (err) {
 			return handleMcpRouteError(c, log, err, `update mcp ${name}`);
+		}
+	});
+
+	app.get("/:name/tools", async (c) => {
+		const name = requireName(c.req.param("name"));
+		if (!name) return c.json({ ok: false, error: "name is required" }, 400);
+		try {
+			const { tools, disabledTools } = await listGholamMcpToolsForServer(name);
+			const response: ListMcpToolsResponse = {
+				name,
+				tools: tools.map(({ name: toolName, description, inputSchema }) => ({
+					name: toolName,
+					...(description !== undefined ? { description } : {}),
+					...(inputSchema !== undefined ? { inputSchema } : {}),
+				})),
+				disabledTools,
+			};
+			return c.json(response);
+		} catch (err) {
+			return handleMcpRouteError(c, log, err, `list tools for mcp ${name}`);
+		}
+	});
+
+	app.post("/:name/tools/:tool/toggle", async (c) => {
+		const name = requireName(c.req.param("name"));
+		const tool = requireName(c.req.param("tool"));
+		if (!name) return c.json({ ok: false, error: "name is required" }, 400);
+		if (!tool) return c.json({ ok: false, error: "tool is required" }, 400);
+		let body: ToggleMcpToolRequest;
+		try {
+			body = (await c.req.json()) as ToggleMcpToolRequest;
+		} catch {
+			return c.json({ ok: false, error: "invalid JSON body" }, 400);
+		}
+		if (!body || typeof body.enabled !== "boolean") {
+			return c.json({ ok: false, error: "enabled (boolean) is required" }, 400);
+		}
+		try {
+			const nextDisabled = await withConfig(async (cfg, filePath) => {
+				const servers = { ...(cfg.mcpServers ?? {}) };
+				const existing = servers[name];
+				if (!existing) {
+					throw new HttpError(404, `mcp server "${name}" not found`);
+				}
+				const prev = new Set(existing.disabledTools ?? []);
+				if (body.enabled) prev.delete(tool);
+				else prev.add(tool);
+				const disabledTools = Array.from(prev);
+				servers[name] = { ...existing, disabledTools };
+				await writeConfig(filePath, {
+					mcpServers: servers,
+					...(cfg.disabledServers ? { disabledServers: cfg.disabledServers } : {}),
+				});
+				log.info(`mcp toggle tool: ${name}/${tool} → ${body.enabled ? "enabled" : "disabled"}`);
+				return disabledTools;
+			});
+			broadcastBus.broadcast({
+				type: "mcp_tools_changed",
+				name,
+				disabledTools: nextDisabled,
+			});
+			const response: ToggleMcpToolResponse = {
+				name,
+				tool,
+				enabled: body.enabled,
+				disabledTools: nextDisabled,
+			};
+			return c.json(response);
+		} catch (err) {
+			return handleMcpRouteError(c, log, err, `toggle tool ${tool} for mcp ${name}`);
 		}
 	});
 

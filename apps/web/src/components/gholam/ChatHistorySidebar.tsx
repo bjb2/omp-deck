@@ -25,6 +25,18 @@ export function ChatHistorySidebar({ activeChatId }: Props) {
 	const [chats, setChats] = useState<GholamChat[]>([]);
 	const [error, setError] = useState<string | undefined>();
 
+	// Restore the last-opened chat id from localStorage so a reload lands
+	// the user back on the same thread. Only fires on mount; the URL is
+	// the source of truth once the route param is set.
+	useEffect(() => {
+		try {
+			const stored = localStorage.getItem("omp-deck:gholam:active-chat");
+			if (stored) useStore.getState().setActiveChatId(stored);
+		} catch {
+			// localStorage may be unavailable; non-fatal.
+		}
+	}, []);
+
 	const refresh = useCallback(async () => {
 		try {
 			const res = await gholamChatApi.list({ limit: 25 });

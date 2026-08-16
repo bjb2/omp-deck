@@ -45,6 +45,11 @@ export function GholamChatNew() {
 			});
 			useStore.getState().upsertGholamChat(chat);
 			useStore.getState().setActiveChatId(chat.id);
+			try {
+				localStorage.setItem("omp-deck:gholam:active-chat", chat.id);
+			} catch {
+				// localStorage may be unavailable (private mode, quota); non-fatal.
+			}
 			navigate(`/gholam/chat/${chat.id}`);
 		} catch (e) {
 			setError(String(e));

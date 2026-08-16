@@ -49,6 +49,7 @@ interface HttpMcpServer {
 	headers?: Record<string, string>;
 	timeout?: number;
 	enabled?: boolean;
+	disabledTools?: string[];
 }
 
 interface StdioMcpServer {
@@ -58,6 +59,7 @@ interface StdioMcpServer {
 	env?: Record<string, string>;
 	timeout?: number;
 	enabled?: boolean;
+	disabledTools?: string[];
 }
 
 type McpServerConfig = HttpMcpServer | StdioMcpServer;
@@ -547,6 +549,45 @@ function evict(serverName: string): void {
 // ─── Public API ──────────────────────────────────────────────────────────
 
 /**
+ * Per-server `tools/list` for the picker surface. Re-reads `mcp.json` on
+ * every call so the caller always sees the current `disabledTools`, then
+ * delegates to the same 60s cache as the chat surface — a chat and a
+ * picker call share state, no double round-trip. Throws if the named
+ * server is not configured (route layer maps that to 404).
+ */
+export async function listGholamMcpToolsForServer(
+	serverName: string,
+	signal?: AbortSignal,
+): Promise<{ tools: GholamMcpTool[]; disabledTools: string[] }> {
+	const cfg = await readMcpConfig(resolveMcpConfigPath());
+	const serverCfg = cfg.mcpServers?.[serverName];
+	if (!serverCfg) {
+		throw new Error(`mcp server "${serverName}" not found`);
+	}
+	const disabledTools = Array.from(new Set(serverCfg.disabledTools ?? []));
+	if (cfg.disabledServers?.includes(serverName) || serverCfg.enabled === false) {
+		return { tools: [], disabledTools };
+	}
+	const cached = cache.get(serverName);
+	const now = Date.now();
+	if (cached && isCacheFresh(cached, now) && cached.tools.length > 0) {
+		return { tools: cached.tools, disabledTools };
+	}
+	try {
+		const { client, timeoutMs } = await ensureClient(serverName, serverCfg, signal);
+		const raw = await fetchTools(client, timeoutMs, signal);
+		const tools: GholamMcpTool[] = raw.map((t) => ({ server: serverName, ...t }));
+		const prev = cache.get(serverName);
+		cache.set(serverName, { tools, fetchedAt: now, client: client ?? prev?.client });
+		return { tools, disabledTools };
+	} catch (err) {
+		log.warn(`mcp ${serverName}: tools/list failed`, String((err as Error).message ?? err));
+		evict(serverName);
+		return { tools: [], disabledTools };
+	}
+}
+
+/**
  * Enumerate every configured `mcpServers` entry and return their advertised
  * tools (one row per tool, prefix-tagged with the server name). Hits each
  * server once per 60s; the rest of the time the same cache is returned.
@@ -562,9 +603,12 @@ export async function loadGholamMcpTools(signal?: AbortSignal): Promise<GholamMc
 	await Promise.all(
 		entries.map(async ([name, serverCfg]) => {
 			if (disabled.has(name) || serverCfg.enabled === false) return;
+			const perServerDisabled = new Set(serverCfg.disabledTools ?? []);
 			const cached = cache.get(name);
 			if (cached && isCacheFresh(cached, now) && cached.tools.length > 0) {
-				out.push(...cached.tools);
+				for (const tool of cached.tools) {
+					if (!perServerDisabled.has(tool.name)) out.push(tool);
+				}
 				return;
 			}
 			try {
@@ -573,7 +617,9 @@ export async function loadGholamMcpTools(signal?: AbortSignal): Promise<GholamMc
 				const tools: GholamMcpTool[] = raw.map((t) => ({ server: name, ...t }));
 				const prev = cache.get(name);
 				cache.set(name, { tools, fetchedAt: now, client: client ?? prev?.client });
-				out.push(...tools);
+				for (const tool of tools) {
+					if (!perServerDisabled.has(tool.name)) out.push(tool);
+				}
 			} catch (err) {
 				log.warn(`mcp ${name}: tools/list failed`, String((err as Error).message ?? err));
 				evict(name);

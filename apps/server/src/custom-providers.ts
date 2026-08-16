@@ -26,6 +26,7 @@ import * as path from "node:path";
 import YAML from "yaml";
 
 import { getDeckModelRegistry } from "./auth-singleton.ts";
+import { atomicWriteSync } from "./env-store.ts";
 import { logger } from "./log.ts";
 
 const log = logger("custom-providers");
@@ -116,12 +117,11 @@ export class CustomProvidersRegistry {
 
 	async save(file: CustomProvidersFile): Promise<void> {
 		const fp = this.resolvePath();
-		const dir = path.dirname(fp);
-		await fs.mkdir(dir, { recursive: true });
-		// Atomic write: tmp → rename. Preserves last-known-good if the write is interrupted.
-		const tmp = `${fp}.${process.pid}.${Date.now()}.tmp`;
-		await fs.writeFile(tmp, YAML.stringify(file), "utf-8");
-		await fs.rename(tmp, fp);
+		// Durability: tmp + writeFile + fsync + rename through the shared
+		// atomicWriteSync helper. Preserves last-known-good if the write is
+		// interrupted; fsync guarantees a crash leaves either the old or
+		// the new contents, never a torn file.
+		await atomicWriteSync(fp, YAML.stringify(file));
 		this.fileMtime = (await fs.stat(fp)).mtimeMs;
 		this.hasLoadedMtime = true;
 		this.providers.clear();
