@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { useParams } from "react-router-dom";
 import type { StoreItem, StoreSection } from "@omp-deck/protocol";
 import { storefrontApi } from "@/lib/storefront-api";
@@ -17,15 +19,24 @@ export function StorefrontSection() {
 	const [items, setItems] = useState<StoreItem[]>([]);
 	const [sort, setSort] = useState<"recent" | "popular" | "name">("recent");
 	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
 		let alive = true;
 		async function load() {
 			setLoading(true);
-			const r = await storefrontApi.section(section);
-			if (!alive) return;
-			setItems(r.items);
-			setLoading(false);
+			setError(null);
+			try {
+				const r = await storefrontApi.section(section);
+				if (!alive) return;
+				setItems(r.items);
+				setLoading(false);
+			} catch (err) {
+				if (!alive) return;
+				setError(err instanceof Error ? err.message : String(err));
+				setItems([]);
+				setLoading(false);
+			}
 		}
 		void load();
 		return () => {

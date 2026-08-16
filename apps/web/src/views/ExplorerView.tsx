@@ -31,6 +31,8 @@ import { gitApi } from "@/lib/git-api";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
+const DEFAULT_EXPLORER_ROOT_KEY = "omp-deck:explorer:root";
+
 interface EditorTab {
 	kind: "file";
 	path: string;
