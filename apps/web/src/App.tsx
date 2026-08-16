@@ -35,12 +35,20 @@ function AuthedApp() {
 		void bootstrap();
 	}, [bootstrap]);
 
+	// Outer column gives the sticky FocusStrip a real scrolling ancestor so
+	// it pins at top while the route content scrolls beneath it. The previous
+	// layout was a fragment, which left sticky inert — content kept clipping
+	// below the viewport instead of scrolling under the strip.
 	return (
 		<FocusModeProvider>
-			<FocusStrip />
-			<NotificationPermissionBanner />
-			<AppRouter />
-			<NotificationToast />
+			<div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+				<FocusStrip />
+				<NotificationPermissionBanner />
+				<div className="min-h-0 flex-1 overflow-y-auto">
+					<AppRouter />
+				</div>
+				<NotificationToast />
+			</div>
 		</FocusModeProvider>
 	);
 }

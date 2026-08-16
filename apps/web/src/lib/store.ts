@@ -280,6 +280,11 @@ interface StoreState {
 	setSessionUrgency(id: string, urgency: SessionUrgency): Promise<void>;
 	setSessionImportance(id: string, importance: SessionImportance): Promise<void>;
 	archiveSession(id: string): Promise<void>;
+	unarchiveSession(id: string): Promise<void>;
+	/** Hard-delete a session: dispose the live handle if any AND drop the
+	 *  persisted meta row. The server handles both via DELETE /sessions/:id.
+	 *  The caller is responsible for showing a confirmation prompt. */
+	deleteSession(id: string): Promise<void>;
 	/** Mark a session id as user-renamed so AI regenerates skip setName. */
 	markSessionUserRenamed(id: string): void;
 	toggleAllToolCards(): void;
@@ -607,6 +612,40 @@ export const useStore = create<StoreState>()(
 				return {
 					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
 					sessions,
+				};
+			});
+		},
+		async unarchiveSession(id) {
+			await api.patchSessionMeta(id, { archived: false });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, archived: false } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, archived: false } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async deleteSession(id) {
+			try {
+				await api.disposeSession(id);
+			} catch (err) {
+				// Surface the failure to the caller via a re-throw but still
+				// keep the local store consistent: a 404 here means the
+				// session was already gone server-side, which is fine.
+				const msg = String((err as Error).message ?? err);
+				if (!msg.includes("HTTP 404")) throw err;
+			}
+			set((s) => {
+				const nextById = { ...s.sessionsById };
+				delete nextById[id];
+				const nextSessions = s.sessions.filter((r) => r.id !== id);
+				const nextActive = s.activeId === id ? undefined : s.activeId;
+				return {
+					sessionsById: nextById,
+					sessions: nextSessions,
+					activeId: nextActive,
 				};
 			});
 		},

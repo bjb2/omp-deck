@@ -33,6 +33,35 @@ function bareClonePath(owner: string, repo: string): string {
 }
 export { bareClonePath };
 
+/**
+ * Create a default worktree for `<owner>/<repo>` if one doesn't exist.
+ * The bare clone isn't directly usable for edits — users want a checkout.
+ * Returns the path to the worktree on success. Errors are non-fatal: the
+ * caller can still register the bare clone path itself as a workspace.
+ */
+async function ensureDefaultWorktree(owner: string, repo: string, branch: string): Promise<string | null> {
+	const wtDir = worktreePath(owner, repo, branch);
+	try {
+		await fs.mkdir(path.dirname(wtDir), { recursive: true });
+	} catch {
+		return null;
+	}
+	if (existsSync(wtDir)) return wtDir;
+	try {
+		await run(["worktree", "add", wtDir, branch], {
+			cwd: bareClonePath(owner, repo),
+			timeoutMs: GIT_TIMEOUT_MS,
+		});
+		log.info(`created default worktree ${wtDir}`);
+		return wtDir;
+	} catch (err) {
+		log.warn(`ensureDefaultWorktree failed for ${owner}/${repo}@${branch}`, err);
+		return null;
+	}
+}
+
+export { ensureDefaultWorktree };
+
 function worktreesRoot(owner: string, repo: string): string {
 	return path.join(reposRoot(), owner, `${repo}.worktrees`);
 }

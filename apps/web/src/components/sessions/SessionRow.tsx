@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ChevronDown, MoreHorizontal, RefreshCw } from "lucide-react";
+import { Archive, ChevronDown, MoreHorizontal, RefreshCw, Trash2, ArchiveRestore } from "lucide-react";
 
 import { Badge } from "@/components/ui/Badge";
 import type {
@@ -21,9 +21,11 @@ export interface SessionRowProps {
 	onClick?: () => void;
 	sessionId?: string;
 	onArchive?: (id: string) => void;
+	onUnarchive?: (id: string) => void;
 	onRegenerate?: (id: string) => void;
 	onSetUrgency?: (id: string, urgency: SessionUrgency) => void;
 	onSetImportance?: (id: string, importance: SessionImportance) => void;
+	onDelete?: (id: string) => void;
 }
 
 const ROW_VALUES = ["low", "normal", "high", "critical"] as const;
@@ -72,9 +74,11 @@ export function SessionRow(props: SessionRowProps) {
 		onClick,
 		sessionId,
 		onArchive,
+		onUnarchive,
 		onRegenerate,
 		onSetUrgency,
 		onSetImportance,
+		onDelete,
 	} = props;
 
 	const resolvedTitle =
@@ -85,7 +89,7 @@ export function SessionRow(props: SessionRowProps) {
 	const status: SessionStatus = summary?.status ?? (summary?.archived ? "archived" : "active");
 	const repoId = summary?.repoId;
 	const id = sessionId ?? summary?.id;
-	const showMenu = !!(id && (onArchive || onRegenerate || onSetUrgency || onSetImportance));
+	const showMenu = !!(id && (onArchive || onUnarchive || onRegenerate || onSetUrgency || onSetImportance || onDelete));
 	const subtitleFull = subtitle ?? (summary?.cwd ? shortPath(summary.cwd, 30) : "");
 	const statusTone =
 		status === "active" ? "text-success" :
@@ -163,9 +167,11 @@ export function SessionRow(props: SessionRowProps) {
 						importance={importance}
 						archived={summary?.archived ?? status === "archived"}
 						onArchive={onArchive}
+						onUnarchive={onUnarchive}
 						onRegenerate={onRegenerate}
 						onSetUrgency={onSetUrgency}
 						onSetImportance={onSetImportance}
+						onDelete={onDelete}
 					/>
 				) : null}
 			</div>
@@ -179,9 +185,11 @@ interface RowMenuProps {
 	importance?: SessionImportance;
 	archived?: boolean;
 	onArchive?: (id: string) => void;
+	onUnarchive?: (id: string) => void;
 	onRegenerate?: (id: string) => void;
 	onSetUrgency?: (id: string, urgency: SessionUrgency) => void;
 	onSetImportance?: (id: string, importance: SessionImportance) => void;
+	onDelete?: (id: string) => void;
 }
 
 function RowMenu({
@@ -190,9 +198,11 @@ function RowMenu({
 	importance,
 	archived,
 	onArchive,
+	onUnarchive,
 	onRegenerate,
 	onSetUrgency,
 	onSetImportance,
+	onDelete,
 }: RowMenuProps) {
 	const [open, setOpen] = useState(false);
 	const [submenu, setSubmenu] = useState<"urgency" | "importance" | null>(null);
@@ -284,13 +294,42 @@ function RowMenu({
 					<div className="border-t border-line" />
 					<MenuBtn
 						icon={<Archive className="h-3 w-3" />}
-						label={archived ? "Already archived" : "Archive"}
+						label={archived ? "Archive (already)" : "Archive"}
 						disabled={archived || !onArchive}
 						onClick={() => {
 							onArchive?.(sessionId);
 							close();
 						}}
 					/>
+					{onUnarchive ? (
+						<MenuBtn
+							icon={<ArchiveRestore className="h-3 w-3" />}
+							label="Unarchive"
+							disabled={!archived}
+							onClick={() => {
+								onUnarchive(sessionId);
+								close();
+							}}
+						/>
+					) : null}
+					{onDelete ? (
+						<>
+							<div className="border-t border-line" />
+							<MenuBtn
+								icon={<Trash2 className="h-3 w-3" />}
+								label="Delete session"
+								danger
+								onClick={() => {
+									const ok = window.confirm(
+										`Delete this session? This removes it from the sidebar AND its persisted record. The transcript cannot be recovered.`,
+									);
+									if (!ok) return;
+									onDelete(sessionId);
+									close();
+								}}
+							/>
+						</>
+					) : null}
 				</div>
 			) : null}
 		</div>
@@ -302,11 +341,13 @@ function MenuBtn({
 	label,
 	onClick,
 	disabled,
+	danger,
 }: {
 	icon: React.ReactNode;
 	label: string;
 	onClick: () => void;
 	disabled?: boolean;
+	danger?: boolean;
 }) {
 	return (
 		<button
@@ -316,7 +357,11 @@ function MenuBtn({
 			onClick={onClick}
 			className={cn(
 				"flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-paper-3",
-				disabled ? "cursor-not-allowed text-ink-4" : "text-ink-2",
+				disabled
+					? "cursor-not-allowed text-ink-4"
+					: danger
+						? "text-danger hover:bg-danger/10"
+						: "text-ink-2",
 			)}
 		>
 			<span className="text-ink-3">{icon}</span>

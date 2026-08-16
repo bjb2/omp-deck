@@ -20,6 +20,7 @@ import {
 	isSessionStatus,
 	isSessionUrgency,
 	patchSessionMeta,
+	deleteSessionMeta,
 } from "./db/session-meta.ts";
 import { resolveWorktreeDir } from "./worktree-service.ts";
 import type {
@@ -376,12 +377,23 @@ export function buildRouter(
 	app.delete("/sessions/:id", async (c) => {
 		const id = c.req.param("id");
 		const handle = bridge.getSession(id);
-		if (!handle) return c.json({ error: "session not found" }, 404);
+		// Best-effort live disposal. If the session isn't active (it may
+		// have been disposed earlier or never loaded into the bridge), we
+		// still want DELETE to succeed for the persisted meta row so the
+		// chat sidebar can remove the entry.
+		if (handle) {
+			try {
+				await handle.dispose();
+			} catch (err) {
+				log.warn(`dispose failed for ${id} (continuing to meta delete): ${String(err)}`);
+			}
+		}
+		const removed = deleteSessionMeta(id);
+		if (!handle && !removed) return c.json({ error: "session not found" }, 404);
 		try {
-			await handle.dispose();
 			return c.json({ ok: true });
 		} catch (err) {
-			log.error(`dispose failed`, err);
+			log.error(`delete session failed`, err);
 			return c.json({ error: String(err) }, 500);
 		}
 	});

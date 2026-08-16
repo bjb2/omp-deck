@@ -33,6 +33,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const gitApi = {
+	/**
+	 * Register a cwd as a workspace so it appears in the workspace picker
+	 * after navigation/refresh. The server accepts the path only if it is
+	 * under the user's home directory (see `isCwdAllowed`).
+	 */
+	registerWorkspace(cwd: string): Promise<{ ok: true; workspace: { cwd: string; label: string; sessionCount: number } }> {
+		return request("/workspaces/register", {
+			method: "POST",
+			body: JSON.stringify({ cwd }),
+		});
+	},
 	status(cwd: string): Promise<GitRepoStatus> {
 		return request(`/git/status?cwd=${encodeURIComponent(cwd)}`);
 	},

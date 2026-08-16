@@ -150,7 +150,11 @@ export function Layout({ sidebar, main, inspector, topBar }: Props) {
 					</div>
 				</aside>
 
-				<main id="deck-main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col bg-paper focus:outline-none">
+				<main
+					id="deck-main"
+					tabIndex={-1}
+					className="relative flex min-w-0 flex-1 flex-col overflow-y-auto bg-paper focus:outline-none"
+				>
 					{main}
 				</main>
 

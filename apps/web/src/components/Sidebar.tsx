@@ -10,6 +10,21 @@ import type { SessionUi } from "@/lib/types";
 
 type GroupBy = "recent" | "repo" | "urgency" | "importance";
 
+const SHOW_ARCHIVED_STORAGE_KEY = "omp-deck.sidebar.showArchived";
+
+function readShowArchived(): boolean {
+	if (typeof window === "undefined") return false;
+	return window.localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === "1";
+}
+
+function persistShowArchived(v: boolean): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, v ? "1" : "0");
+	} catch {
+		/* swallow: localStorage may be unavailable (private mode, quota) */
+	}
+}
 const GROUP_BY_STORAGE_KEY = "omp-deck.sidebar.groupBy";
 
 function readStoredGroupBy(): GroupBy {
@@ -54,6 +69,8 @@ export function Sidebar() {
 	const setSessionUrgency = useStore((s) => s.setSessionUrgency);
 	const setSessionImportance = useStore((s) => s.setSessionImportance);
 	const archiveSession = useStore((s) => s.archiveSession);
+	const unarchiveSession = useStore((s) => s.unarchiveSession);
+	const deleteSession = useStore((s) => s.deleteSession);
 
 	const [selectedCwd, setSelectedCwd] = useState<string | "">("");
 	const [creating, setCreating] = useState(false);
@@ -61,6 +78,11 @@ export function Sidebar() {
 	const [groupBy, setGroupBy] = useState<GroupBy>(() => readStoredGroupBy());
 	const [groupedGroups, setGroupedGroups] = useState<Array<{ key: string; sessions: SessionSummary[] }>>([]);
 	const [groupedLoading, setGroupedLoading] = useState(false);
+	const [showArchived, setShowArchived] = useState<boolean>(() => readShowArchived());
+
+	useEffect(() => {
+		persistShowArchived(showArchived);
+	}, [showArchived]);
 
 	useEffect(() => {
 		persistGroupBy(groupBy);
@@ -137,7 +159,9 @@ export function Sidebar() {
 	}
 
 	const liveSessions = Object.values(sessionsById);
-	const persisted = filtered
+	const archivedLive = liveSessions.filter((s) => s.meta?.archived === true);
+	const activeLive = liveSessions.filter((s) => s.meta?.archived !== true);
+	const persistedAll = filtered
 		.filter((s) => !sessionsById[s.id])
 		.slice()
 		.sort((a, b) => {
@@ -145,6 +169,21 @@ export function Sidebar() {
 			if (u !== 0) return u;
 			return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
 		});
+	const archivedPersisted = persistedAll.filter((s) => s.archived === true);
+	const persisted = persistedAll.filter((s) => s.archived !== true);
+	const archivedCount = archivedLive.length + archivedPersisted.length;
+
+	async function handleUnarchive(id: string): Promise<void> {
+		// Reuse the store's archiveSession action by passing a custom meta
+		// patch — the action wraps the patch but does not accept an
+		// unarchive variant. Direct call to the patch helper is the
+		// cleanest path: clear the archived flag locally + remotely.
+		await unarchiveSession(id);
+	}
+
+	async function handleDelete(id: string): Promise<void> {
+		await deleteSession(id);
+	}
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -224,6 +263,16 @@ export function Sidebar() {
 				>
 					<RefreshCw className="h-3 w-3" />
 				</button>
+				{archivedCount > 0 ? (
+					<button
+						type="button"
+						onClick={() => setShowArchived((v) => !v)}
+						className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs text-ink-3 hover:bg-paper-3 hover:text-ink"
+						title={showArchived ? "Hide archived sessions" : `Show ${archivedCount} archived`}
+					>
+						{showArchived ? "hide archived" : `show archived (${archivedCount})`}
+					</button>
+				) : null}
 			</div>
 
 			<div className="px-3 pb-2">
@@ -246,7 +295,7 @@ export function Sidebar() {
 			<div className="flex-1 overflow-y-auto px-1 pb-3">
 				{groupBy === "recent" ? (
 					<>
-						{liveSessions.map((s) => (
+						{activeLive.map((s) => (
 							<SessionRow
 								key={s.sessionId}
 								summary={liveSummaryFromUi(s)}
@@ -259,13 +308,15 @@ export function Sidebar() {
 								sessionId={s.sessionId}
 								onClick={() => selectSession(s.sessionId)}
 								onArchive={(id) => void archiveSession(id)}
+								onUnarchive={(id) => void handleUnarchive(id)}
 								onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
 								onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
 								onSetImportance={(id, i) => void setSessionImportance(id, i)}
+								onDelete={(id) => void handleDelete(id)}
 							/>
 						))}
 
-						{liveSessions.length > 0 && persisted.length > 0 ? (
+						{activeLive.length > 0 && persisted.length > 0 ? (
 							<div className="my-2 mx-2 border-t border-line" />
 						) : null}
 
@@ -276,13 +327,60 @@ export function Sidebar() {
 								subtitle={shortPath(s.cwd, 30)}
 								onClick={() => void handleResume(s.path)}
 								onArchive={(id) => void archiveSession(id)}
+								onUnarchive={(id) => void handleUnarchive(id)}
 								onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
 								onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
 								onSetImportance={(id, i) => void setSessionImportance(id, i)}
+								onDelete={(id) => void handleDelete(id)}
 							/>
 						))}
 
-						{filtered.length === 0 && liveSessions.length === 0 ? (
+						{showArchived && (archivedLive.length > 0 || archivedPersisted.length > 0) ? (
+							<>
+								<div className="mx-2 mt-3 mb-1 flex items-center gap-2">
+									<div className="font-mono text-2xs uppercase tracking-meta text-ink-4">
+										archived
+									</div>
+									<div className="h-px flex-1 bg-line" />
+								</div>
+								{archivedLive.map((s) => (
+									<SessionRow
+										key={`a-${s.sessionId}`}
+										summary={liveSummaryFromUi(s)}
+										title={s.sessionName ?? undefined}
+										subtitle={shortPath(s.cwd, 30)}
+										live
+										planMode={s.planMode?.enabled === true}
+										active={s.sessionId === activeId}
+										updatedAt={s.meta?.aiGeneratedAt ?? undefined}
+										sessionId={s.sessionId}
+										onClick={() => selectSession(s.sessionId)}
+										onArchive={(id) => void archiveSession(id)}
+										onUnarchive={(id) => void handleUnarchive(id)}
+										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+										onDelete={(id) => void handleDelete(id)}
+									/>
+								))}
+								{archivedPersisted.map((s) => (
+									<SessionRow
+										key={`a-${s.id}`}
+										summary={s}
+										subtitle={shortPath(s.cwd, 30)}
+										onClick={() => void handleResume(s.path)}
+										onArchive={(id) => void archiveSession(id)}
+										onUnarchive={(id) => void handleUnarchive(id)}
+										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+										onDelete={(id) => void handleDelete(id)}
+									/>
+								))}
+							</>
+						) : null}
+
+						{filtered.length === 0 && activeLive.length === 0 && archivedLive.length === 0 ? (
 							<div className="px-3 py-6 text-center font-mono text-2xs text-ink-3">
 								No sessions yet.
 							</div>
@@ -305,9 +403,11 @@ export function Sidebar() {
 										subtitle={shortPath(s.cwd, 30)}
 										onClick={() => void handleResume(s.path)}
 										onArchive={(id) => void archiveSession(id)}
+										onUnarchive={(id) => void handleUnarchive(id)}
 										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
 										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
 										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+										onDelete={(id) => void handleDelete(id)}
 									/>
 								))}
 							</div>

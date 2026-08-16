@@ -21,7 +21,7 @@ import { logger } from "./log.ts";
 
 const log = logger("openship-service");
 
-const OPENSHIP_URL = "https://ship.v244.net/api/proxy/api/mcp";
+const DEFAULT_OPENSHIP_URL = "https://ship.v244.net/api/proxy/api/mcp";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 type SemanticToolName = "listProjects" | "getProject" | "listDeployments" | "triggerDeploy" | "deploymentLogs";
@@ -44,9 +44,33 @@ interface JsonRpcResponse {
 	error?: { message?: string } | string;
 }
 
+/** Token missing or rejected by upstream (HTTP 401/403). Surface as a 503
+ *  from the route so the web panel renders its connect-hint rather than
+ *  a generic 502. */
 export class OpenshipAuthError extends Error {}
-export class OpenshipApiError extends Error {}
+/** Network/DNS/connect failure (fetch threw before HTTP). Surface as a
+ *  502 with `retryable: true` so the panel can offer a retry button. */
+export class OpenshipUnreachableError extends Error {
+	readonly cause?: unknown;
+	constructor(message: string, cause?: unknown) {
+		super(message);
+		this.cause = cause;
+	}
+}
+/** Local AbortController tripped the timeout. */
 export class OpenshipTimeoutError extends Error {}
+/** Anything the upstream server actually returned (HTTP 4xx/5xx or a
+ *  JSON-RPC `error`). The route maps non-auth upstream failures to 502 so
+ *  the existing web contract keeps its meaning. */
+export class OpenshipApiError extends Error {
+	readonly upstreamStatus?: number;
+	readonly retryable: boolean;
+	constructor(message: string, upstreamStatus?: number, retryable = false) {
+		super(message);
+		this.upstreamStatus = upstreamStatus;
+		this.retryable = retryable;
+	}
+}
 
 let idCounter = 0;
 let initialized = false;
@@ -60,6 +84,22 @@ function resolveTool(semanticName: SemanticToolName): string {
 	const canonical = KNOWN_TOOL_NAMES[semanticName];
 	const lastDot = canonical.lastIndexOf(".");
 	return lastDot >= 0 ? canonical.slice(lastDot + 1) : canonical;
+}
+
+/** Configurable endpoint so deployments behind a different host (or behind a
+ *  Cloudflare tunnel that returns HTML on errors) can repoint without a
+ *  rebuild. Default keeps the sidecar working unchanged. */
+export function getOpenshipEndpoint(): string {
+	const raw = process.env.OMP_OPENSHIP_URL?.trim();
+	if (!raw) return DEFAULT_OPENSHIP_URL;
+	try {
+		const u = new URL(raw);
+		if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+	} catch {
+		// fall through to default
+	}
+	log.warn(`OMP_OPENSHIP_URL is not a valid http(s) URL: ${raw}; using default`);
+	return DEFAULT_OPENSHIP_URL;
 }
 
 /** Discover the actual tool names the server exposes. Non-fatal — when the
@@ -86,13 +126,24 @@ async function init(): Promise<void> {
 		initialized = true;
 	}
 }
+/** Strip a Bearer token if one was accidentally pasted into a user-supplied
+ *  string (e.g. an error message from the upstream). Used before logging or
+ *  returning an error body so the secret never leaks. */
+function redactToken(text: string, token: string): string {
+	if (!token) return text;
+	return text.split(token).join("[redacted]");
+}
+
 async function rawCall<T>(method: string, params: Record<string, unknown>, token: string): Promise<T> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 	const id = ++idCounter;
 	const envelope = { jsonrpc: "2.0", id, method, params };
+	const endpoint = getOpenshipEndpoint();
 	try {
-		const resp = await fetch(OPENSHIP_URL, {
+		let resp: Response;
+		try {
+			resp = await fetch(endpoint, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${token}`,
@@ -102,18 +153,40 @@ async function rawCall<T>(method: string, params: Record<string, unknown>, token
 			body: JSON.stringify(envelope),
 			signal: controller.signal,
 		});
-		if (!resp.ok) {
-			const text = await resp.text().catch(() => "<no body>");
-			throw new OpenshipApiError(`openship ${method} ${resp.status}: ${text}`);
+		} catch (err) {
+			if ((err as Error).name === "AbortError") {
+				throw new OpenshipTimeoutError(`openship ${method} timed out after ${DEFAULT_TIMEOUT_MS}ms`);
+			}
+			throw new OpenshipUnreachableError(
+				`openship ${method} could not reach ${endpoint}: ${(err as Error).message ?? "network error"}`,
+				err,
+			);
 		}
-		const body = (await resp.json()) as JsonRpcResponse;
+		if (!resp.ok) {
+			if (resp.status === 401 || resp.status === 403) {
+				throw new OpenshipAuthError(`openship ${method} rejected the token (HTTP ${resp.status})`);
+			}
+			const text = await resp.text().catch(() => "<no body>");
+			const safe = redactToken(text, token);
+			const retryable = resp.status === 429 || resp.status >= 500;
+			throw new OpenshipApiError(
+				`openship ${method} returned HTTP ${resp.status}: ${safe.slice(0, 240)}`,
+				resp.status,
+				retryable,
+			);
+		}
+		let body: JsonRpcResponse;
+		try {
+			body = (await resp.json()) as JsonRpcResponse;
+		} catch {
+			throw new OpenshipApiError(`openship ${method} returned non-JSON body`, resp.status, false);
+		}
 		if (body.error !== undefined) {
 			const msg = typeof body.error === "string" ? body.error : body.error.message ?? JSON.stringify(body.error);
-			throw new OpenshipApiError(`openship ${method}: ${msg}`);
+			throw new OpenshipApiError(`openship ${method}: ${redactToken(msg, token)}`, undefined, false);
 		}
 		return body.result as T;
 	} catch (err) {
-		if ((err as Error).name === "AbortError") throw new OpenshipTimeoutError(`openship ${method} timed out after ${DEFAULT_TIMEOUT_MS}ms`);
 		throw err;
 	} finally {
 		clearTimeout(timer);

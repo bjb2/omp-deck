@@ -53,9 +53,16 @@ export function PromptEditor({
 	onCommit,
 	className,
 }: Props) {
+	if (!value) {
+		return (
+			<div className={cn("flex h-full items-center justify-center font-mono text-2xs text-ink-3", className)}>
+				no prompt loaded
+			</div>
+		);
+	}
 	const [tab, setTab] = useState<"edit" | "preview">("edit");
-	const [title, setTitle] = useState(value.title);
-	const [category, setCategory] = useState(value.category);
+	const [title, setTitle] = useState(value.title ?? "");
+	const [category, setCategory] = useState(value.category ?? "");
 	const [tags, setTags] = useState((value.tags ?? []).join(", "));
 
 	const draftKey = `prompt:${value.id}`;

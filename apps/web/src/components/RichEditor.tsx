@@ -41,6 +41,12 @@ export interface RichEditorProps {
 	 *  Tab consumes it via `onTabApply` and the decoration follows its range. */
 	suggestions?: PendingSuggestion[];
 	onTabApply?: (s: { id: string; replacement: string }) => void;
+	/** Inline AI hint pills rendered above the surface when the buffer is
+	 *  empty or focused. Each hint shows a short label; clicking it fires
+	 *  `onHintApply(replacement)` so the studio can pre-fill the buffer
+	 *  without round-tripping through Gholam. */
+	aiHints?: Array<{ id: string; label: string; replacement: string }>;
+	onHintApply?: (s: { id: string; replacement: string }) => void;
 }
 
 /* ─── Wavy underline mark for Gholam suggestions ─────────────────────────────
@@ -370,6 +376,8 @@ export const RichEditor = forwardRef<HTMLTextAreaElement | HTMLDivElement, RichE
 			"data-queued-edit": dataQueuedEdit,
 			suggestions,
 			onTabApply,
+			aiHints,
+			onHintApply,
 		},
 		ref,
 	) {
@@ -389,22 +397,22 @@ export const RichEditor = forwardRef<HTMLTextAreaElement | HTMLDivElement, RichE
 		const initialHtml = useMemo(() => blocksToHtml(parseMarkdown(value)), []); // eslint-disable-line react-hooks/exhaustive-deps
 
 		const editor = useEditor(
-			{
-				extensions: [StarterKit, SuggestionMark],
-				content: initialHtml,
-				editable: !readOnly,
-				editorProps: {
-					attributes: {
+		{
+			extensions: [StarterKit, SuggestionMark],
+			content: initialHtml,
+			editable: !readOnly,
+			editorProps: {
+				attributes: {
 					class: "ProseMirror",
-						"data-placeholder": placeholder ?? "",
+					"data-placeholder": placeholder ?? "",
 				},
 			},
-				onUpdate({ editor }) {
-					onChange(serializeDoc(editor.state.doc));
+			onUpdate({ editor }) {
+				onChange(serializeDoc(editor.state.doc));
 			},
-					},
-			[],
-		);
+		},
+		[],
+	);
 
 		// Forward ref to the Tiptap root DOM node so existing callers can
 		// .focus() / .select() just like a textarea.
@@ -498,16 +506,34 @@ export const RichEditor = forwardRef<HTMLTextAreaElement | HTMLDivElement, RichE
 		}
 
 		const minHeight = Math.max(1, rows) * 1.5; // em; rough rows * 1.5em line-height hint
+	const showHints = !readOnly && !disableRichText && value.trim().length === 0 && Array.isArray(aiHints) && aiHints.length > 0;
 		return (
 			<div
 				className={cn("omp-richeditor", className)}
 				data-queued-edit={dataQueuedEdit}
 				style={{ minHeight: `${minHeight}em` }}
 			>
+			{showHints && onHintApply ? (
+				<div className="omp-richeditor__hints flex shrink-0 flex-wrap items-center gap-1 border-b border-line bg-paper-2 px-3 py-1.5">
+					<span className="font-mono text-2xs uppercase tracking-meta text-ink-3">
+						AI hints
+					</span>
+					{aiHints.map((h) => (
+						<button
+							key={h.id}
+							type="button"
+							onClick={() => onHintApply({ id: h.id, replacement: h.replacement })}
+							className="rounded-full border border-line bg-paper px-2 py-0.5 text-2xs text-ink-2 hover:border-accent hover:text-ink"
+							title={h.replacement}
+			>
+							{h.label}
+						</button>
+					))}
+			</div>
+			) : null}
 			<div className="omp-richeditor__surface">
 				{editor ? <EditorContent editor={editor} /> : null}
 			</div>
-			</div>
-		);
-	},
-);
+		</div>
+	);
+});

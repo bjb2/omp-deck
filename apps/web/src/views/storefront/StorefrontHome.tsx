@@ -60,7 +60,8 @@ export function StorefrontHome() {
 					]);
 					if (installedNames.size === 0) return;
 					const byName = new Map<string, StoreItem[]>();
-					for (const it of [...f.items, ...t.items, ...n.items]) {
+					for (const it of [...(f.items ?? []), ...(t.items ?? []), ...(n.items ?? [])]) {
+						if (!it || typeof it.name !== "string") continue;
 						const arr = byName.get(it.name) ?? [];
 						arr.push(it);
 						byName.set(it.name, arr);
@@ -69,7 +70,11 @@ export function StorefrontHome() {
 					for (const [name, items] of byName) {
 						if (!installedNames.has(name)) continue;
 						for (const it of items) {
+							try {
 							if (state.installedAt[it.id] === undefined) state.confirmInstall(it.id);
+						} catch {
+							/* best-effort: skip items whose ids trip the store */
+						}
 						}
 					}
 				})

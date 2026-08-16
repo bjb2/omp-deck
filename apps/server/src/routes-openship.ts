@@ -9,9 +9,11 @@ import { Hono } from "hono";
 import { resolvePrincipal } from "./auth/guard.ts";
 import { getAuthConfig } from "./auth/config.ts";
 import {
+	getOpenshipEndpoint,
 	OpenshipApiError,
 	OpenshipAuthError,
 	OpenshipTimeoutError,
+	OpenshipUnreachableError,
 	deploymentLogs as svcDeploymentLogs,
 	getProject as svcGetProject,
 	hasOpenshipToken,
@@ -38,12 +40,67 @@ function tokenGuard(): { status: 503; body: { error: string } } | null {
 		: { status: 503, body: { error: "OpenShip is not configured — set MCP_OPENSHIP_TOKEN in env" } };
 }
 
-function handleError(err: unknown): { status: number; message: string } {
-	if (err instanceof OpenshipAuthError) return { status: 503, message: err.message };
-	if (err instanceof OpenshipTimeoutError) return { status: 504, message: err.message };
-	if (err instanceof OpenshipApiError) return { status: 502, message: err.message };
+/** Convert a service error into the { status, body } shape returned to the
+ *  web panel. The body keeps the original message plus enough metadata that
+ *  the panel can show a retry button instead of a dead-end banner, while
+ *  never leaking the bearer token. */
+function handleError(err: unknown): { status: number; body: Record<string, unknown> } {
+	const endpoint = getOpenshipEndpoint();
+	if (err instanceof OpenshipAuthError) {
+		return {
+			status: 503,
+			body: {
+				error: err.message,
+				kind: "auth",
+				retryable: false,
+				endpoint,
+			},
+		};
+}
+	if (err instanceof OpenshipTimeoutError) {
+		return {
+			status: 504,
+			body: {
+				error: err.message,
+				kind: "timeout",
+				retryable: true,
+				endpoint,
+			},
+		};
+}
+	if (err instanceof OpenshipUnreachableError) {
+		return {
+			status: 502,
+			body: {
+				error: err.message,
+				kind: "unreachable",
+				retryable: true,
+				endpoint,
+			},
+		};
+}
+	if (err instanceof OpenshipApiError) {
+		return {
+			status: 502,
+			body: {
+				error: err.message,
+				kind: "upstream",
+				retryable: err.retryable,
+				upstreamStatus: err.upstreamStatus,
+				endpoint,
+			},
+		};
+	}
 	log.error("unexpected openship error", err);
-	return { status: 500, message: "internal error" };
+	return {
+		status: 500,
+		body: {
+			error: "internal error",
+			kind: "internal",
+			retryable: false,
+			endpoint,
+		},
+	};
 }
 
 /** Project id segment validator. OpenShip uses opaque ids (`proj_XXX`); we
@@ -77,8 +134,8 @@ export function buildOpenshipRouter(): Hono {
 			const items = await svcListProjects();
 			return c.json({ items });
 		} catch (err) {
-			const { status, message } = handleError(err);
-			return c.json({ error: message }, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
+			const { status, body } = handleError(err);
+			return c.json(body, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
 		}
 	});
 
@@ -93,8 +150,8 @@ export function buildOpenshipRouter(): Hono {
 			const { project, deployments } = await svcGetProject(idOrErr);
 			return c.json({ project, deployments });
 		} catch (err) {
-			const { status, message } = handleError(err);
-			return c.json({ error: message }, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
+			const { status, body } = handleError(err);
+			return c.json(body, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
 		}
 	});
 
@@ -109,8 +166,8 @@ export function buildOpenshipRouter(): Hono {
 			const { deploymentId } = await svcTriggerDeploy(idOrErr);
 			return c.json({ deploymentId });
 		} catch (err) {
-			const { status, message } = handleError(err);
-			return c.json({ error: message }, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
+			const { status, body } = handleError(err);
+			return c.json(body, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
 		}
 	});
 
@@ -127,8 +184,8 @@ export function buildOpenshipRouter(): Hono {
 			const lines = await svcDeploymentLogs(idOrErr, tail);
 			return c.json({ lines });
 		} catch (err) {
-			const { status, message } = handleError(err);
-			return c.json({ error: message }, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
+			const { status, body } = handleError(err);
+			return c.json(body, status as 400 | 401 | 403 | 500 | 502 | 503 | 504);
 		}
 	});
 

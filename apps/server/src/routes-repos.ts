@@ -13,12 +13,15 @@ import type {
 import {
 	cloneRepo,
 	deleteRepo,
+	ensureDefaultWorktree,
 	getRepo,
 	listRepos,
+	bareClonePath,
 	RepoAlreadyExistsError,
 	RepoError,
 	RepoNotFoundError,
 } from "./repo-service.ts";
+import { extraWorkspaces } from "./routes-workspaces.ts";
 import { logger } from "./log.ts";
 
 const log = logger("routes-repos");
@@ -67,6 +70,20 @@ export function buildReposRouter(): Hono {
 				repo: body.repo,
 				...(typeof body.token === "string" ? { token: body.token } : {}),
 			});
+			// Register the bare clone + the default worktree so the workspace
+			// picker lists them after navigation/refresh. Without this,
+			// GET /api/workspaces only returns seed + session cwds and a
+			// freshly cloned repo would be invisible until the user
+			// manually registers it.
+			try {
+				const wt = await ensureDefaultWorktree(body.owner, body.repo, repo.defaultBranch);
+				for (const p of [repo.clonePath, ...(wt ? [wt] : [])]) {
+					if (!extraWorkspaces.includes(p)) extraWorkspaces.push(p);
+				}
+			} catch (err) {
+				log.warn("failed to ensure default worktree after clone", err);
+				if (!extraWorkspaces.includes(repo.clonePath)) extraWorkspaces.push(repo.clonePath);
+			}
 			const resp: CreateRepoResponse = { repo };
 			return c.json(resp);
 		} catch (err) {
@@ -97,6 +114,14 @@ export function buildReposRouter(): Hono {
 		if (repoErr) return c.json({ error: repoErr }, 400);
 		try {
 			await deleteRepo(owner, repo);
+		// Best-effort: also unregister the workspace so the picker drops
+		// the entry. The next GET /api/workspaces will skip it cleanly.
+		const cloneDir = bareClonePath(owner, repo);
+		for (let i = extraWorkspaces.length - 1; i >= 0; i--) {
+			if (extraWorkspaces[i] === cloneDir || extraWorkspaces[i]?.startsWith(`${cloneDir.replace(/\.git$/, "")}`)) {
+				extraWorkspaces.splice(i, 1);
+			}
+		}
 			return c.body(null, 204);
 		} catch (err) {
 			if (err instanceof RepoNotFoundError) return c.json({ error: "repo not found" }, 404);

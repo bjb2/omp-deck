@@ -45,7 +45,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 		...init,
 	});
 	if (!res.ok) {
-		throw new Error(`storefrontApi ${path} failed: ${res.status}`);
+		let detail = `HTTP ${res.status}`;
+		try {
+			const body = (await res.json()) as { error?: unknown };
+			if (body && typeof body.error === "string") detail = body.error;
+		} catch {
+			// body wasn't JSON — fall through with status code.
+		}
+		throw new Error(`storefrontApi ${path} failed (${res.status}): ${detail}`);
 	}
 	return (await res.json()) as T;
 }

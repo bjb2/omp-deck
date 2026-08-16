@@ -412,6 +412,7 @@ export class KbService {
 		| { kind: "not-found" }
 		| { kind: "conflict" }
 		| { kind: "invalid-path" }
+		| { kind: "mkdir-failed"; message: string }
 		| { kind: "invalid-frontmatter"; message: string }
 	> {
 		await this.ensureIndex();
@@ -433,13 +434,24 @@ export class KbService {
 
 		// Ensure parent dir exists for create. Update is a no-op since the
 		// existence check above guarantees the dir.
+		// Also auto-make the kb root itself: a fresh install may point at e.g.
+		// ~/kb which the user has not created yet. The welcome pane offers
+		// "Create starter README" but a user may skip it and POST a file
+		// directly — that should still succeed and surface a clear error if
+		// mkdir is denied (read-only FS, permission denied, etc).
 		if (mode === "create") {
+			try {
+				await mkdir(this.root, { recursive: true });
+			} catch (err) {
+				log.error(`mkdir failed at ${this.root}`, err);
+				return { kind: "mkdir-failed", message: String((err as Error).message ?? err) };
+			}
 			const parent = path.dirname(abs);
 			try {
 				await mkdir(parent, { recursive: true });
 			} catch (err) {
 				log.error(`mkdir failed at ${parent}`, err);
-				return { kind: "invalid-path" };
+				return { kind: "mkdir-failed", message: String((err as Error).message ?? err) };
 			}
 		}
 

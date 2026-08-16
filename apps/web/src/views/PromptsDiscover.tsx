@@ -32,14 +32,19 @@ export function PromptsDiscover() {
 	const setPromptsLibrary = useStore((s) => s.setPromptsLibrary);
 	const [search, setSearch] = useState("");
 	const [saving, setSaving] = useState<string | undefined>();
+	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | undefined>();
 
 	const refresh = useCallback(async (): Promise<void> => {
+		setLoading(true);
 		try {
 			const resp = await promptsApi.list();
+			setError(undefined);
 			setPromptsLibrary(resp.prompts);
 		} catch (err) {
 			setError(String((err as Error).message ?? err));
+		} finally {
+			setLoading(false);
 		}
 	}, [setPromptsLibrary]);
 
@@ -116,7 +121,21 @@ export function PromptsDiscover() {
 					value={search}
 					onChange={(e) => setSearch(e.target.value)}
 				/>
+				<button
+					type="button"
+					onClick={() => void refresh()}
+					className="btn-ghost inline-flex h-7 items-center gap-1 rounded-md border border-line bg-paper-2 px-2 text-2xs text-ink-3 hover:text-ink"
+					title="Refresh library from server"
+				>
+					<Loader2 className="h-3 w-3" />
+					<span className="hidden sm:inline">Refresh</span>
+				</button>
 			</div>
+			{loading ? (
+				<div className="flex shrink-0 items-center gap-2 border-b border-line bg-paper-2 px-3 py-1.5 font-mono text-2xs text-ink-3">
+					<Loader2 className="h-3 w-3 animate-spin" /> loading prompts…
+				</div>
+			) : null}
 			{error ? (
 				<div className="border-b border-danger/40 bg-danger/10 px-3 py-1.5 font-mono text-2xs text-danger">
 					{error}
@@ -147,8 +166,23 @@ export function PromptsDiscover() {
 						{q ? `results for "${q}"` : "all prompts"}
 					</h2>
 					{results.length === 0 ? (
-						<div className="font-mono text-2xs text-ink-3">
-							{q ? "no matches" : "library is empty — save your first prompt"}
+						<div className="rounded-md border border-line bg-paper-2 p-3 text-xs text-ink-3">
+							{q ? (
+								<>No prompts match <span className="font-mono text-ink-2">{q}</span>. Try a different term or{" "}
+								<a href="/prompts/library" className="text-accent underline">create one manually</a>.</>
+							) : (
+								<>
+									<div className="font-medium text-ink-2">Your prompt library is empty.</div>
+									<div className="mt-1">
+										External discovery (GitHub trending + web) is offline — save your first prompt
+										from <a href="/prompts/library" className="text-accent underline">Prompts → Library</a>{" "}
+										or import via a gist URL.
+									</div>
+									<div className="mt-2 font-mono text-2xs text-ink-4">
+										errored: {error ?? "no prompts returned from server"}
+									</div>
+								</>
+							)}
 						</div>
 					) : (
 						<div className="grid gap-2 sm:grid-cols-2">

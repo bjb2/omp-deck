@@ -5,6 +5,8 @@ import { Layout } from "@/components/Layout";
 import { AcidTimeline } from "@/components/acid/AcidTimeline";
 import {
 	overviewApi,
+	type ActivityCell,
+	type ActivityTracker as ActivityTrackerData,
 	type OverviewNewsItem,
 	type OverviewResponse,
 	type OverviewWindow,
@@ -200,7 +202,13 @@ export function OverviewView() {
 							)}
 						</section>
 
-						{/* Stats strip */}
+						{/* Activity Tracker — GitHub-style contributions grid */}
+						<ActivityTrackerSection
+							data={overviewApi.activityTracker(data?.events ?? [])}
+							loading={loading}
+							error={error}
+						/>
+
 						{/* Acid Lab activity timeline — GitHub-changes-in-time-period direction. */}
 						<AcidTimeline events={data?.events ?? []} />
 
@@ -507,5 +515,156 @@ function OverviewGenuiSlot({
 
 			{!hasNodes ? fallback : null}
 		</section>
+	);
+}
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const LEVEL_LABELS = ["none", "1 event", "2–3 events", "4–6 events", "7+ events"] as const;
+
+/**
+ * GitHub-style contributions grid. Sourced from the same `events` array
+ * the rest of the overview uses — no extra fetch. Renders a labeled
+ * month-axis, weekday rail, level-tinted cells, totals row, and a
+ * legend. Empty data shows a useful empty-state instead of disappearing.
+ */
+function ActivityTrackerSection({
+	data,
+	loading,
+	error,
+}: {
+	data: ActivityTrackerData;
+	loading: boolean;
+	error?: string;
+}) {
+	return (
+		<section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper px-6 py-5">
+			<div className="flex items-center gap-2">
+				<h2 className="font-mono text-2xs uppercase tracking-meta text-ink-3">
+					Activity Tracker ({data.weeks} weeks)
+				</h2>
+				{loading ? (
+					<span className="font-mono text-2xs text-ink-4" aria-live="polite">
+						loading…
+					</span>
+				) : null}
+			</div>
+
+			{error ? (
+				<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-2xs text-danger">
+					{error}
+				</div>
+			) : null}
+
+			{loading ? (
+				<div className="flex flex-col gap-2">
+					<Skeleton className="h-[100px] rounded-md" />
+					<Skeleton className="h-3 w-2/3 rounded-md" />
+				</div>
+			) : data.empty ? (
+				<ActivityEmpty />
+			) : (
+				<ActivityGrid data={data} />
+			)}
+		</section>
+	);
+}
+
+function ActivityEmpty() {
+	return (
+		<div className="flex flex-col gap-2 rounded-md border border-dashed border-line bg-paper-2 px-4 py-6">
+			<div className="font-mono text-2xs uppercase tracking-meta text-ink-3">
+				No activity yet
+			</div>
+			<p className="text-xs text-ink-3">
+				The grid will fill in as you ship sessions, complete tasks, and trigger
+				routines. The cells below show what a fresh deck looks like — come back
+				after your first session.
+			</p>
+			<Skeleton className="mt-2 h-[88px] w-full rounded-md" />
+		</div>
+	);
+}
+
+function ActivityGrid({ data }: { data: ActivityTrackerData }) {
+	const cells = data.cells;
+	const monthLabels = data.monthLabels;
+	return (
+		<div className="activity-tracker">
+			<div className="flex items-start gap-2">
+				<div className="activity-tracker__weekday-rail">
+					{WEEKDAY_LABELS.map((label, i) => (
+						<span key={label} aria-hidden={i % 2 === 0 ? "true" : undefined}>
+							{i % 2 === 1 ? label : ""}
+						</span>
+					))}
+				</div>
+				<div className="flex-1 overflow-x-auto">
+					<div className="activity-tracker__months" style={{ width: `${data.weeks * 15}px` }}>
+						{Array.from({ length: data.weeks }).map((_, col) => {
+							const label = monthLabels.find((m) => m.colIndex === col);
+							return (
+								<span key={col} aria-hidden={label ? undefined : "true"}>
+									{label?.label ?? ""}
+								</span>
+							);
+						})}
+					</div>
+					<div
+						className="activity-tracker__cells mt-1"
+						style={{ width: `${data.weeks * 15}px` }}
+						role="grid"
+						aria-label={`Activity over the last ${data.weeks} weeks`}
+					>
+						{cells.map((cell) => (
+							<ActivityCellView key={`${cell.date}-${cell.rowIndex}`} cell={cell} />
+						))}
+					</div>
+				</div>
+			</div>
+
+			<div className="activity-tracker__totals">
+				<span>
+					<strong>{data.totals.totalEvents}</strong>events
+				</span>
+				<span>
+					<strong>{data.totals.activeDays}</strong>active days
+				</span>
+				<span>
+					<strong>{data.totals.longestStreak}</strong>longest streak
+				</span>
+				<span>
+					<strong>{data.totals.currentStreak}</strong>current streak
+				</span>
+			</div>
+
+			<div className="activity-tracker__legend">
+				<span>less</span>
+				{LEVEL_LABELS.map((label, level) => (
+					<span
+						key={label}
+						className="activity-tracker__scale-cell"
+						data-level={level}
+						title={label}
+						aria-label={label}
+					/>
+				))}
+				<span>more</span>
+			</div>
+		</div>
+	);
+}
+
+function ActivityCellView({ cell }: { cell: ActivityCell }) {
+	const title = cell.count === 0
+		? `No events on ${cell.date}`
+		: `${cell.count} event${cell.count === 1 ? "" : "s"} on ${cell.date}`;
+	return (
+		<span
+			className="activity-tracker__cell"
+			data-level={cell.level}
+			role="gridcell"
+			aria-label={title}
+			title={title}
+		/>
 	);
 }

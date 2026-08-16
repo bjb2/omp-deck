@@ -15,7 +15,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 	});
 	if (!res.ok) {
 		const body = await res.text().catch(() => "");
-		throw new Error(`HTTP ${res.status} ${path}: ${body}`);
+		let detail = body;
+		try {
+			const parsed = JSON.parse(body) as { error?: string };
+			if (parsed && typeof parsed.error === "string") detail = parsed.error;
+		} catch {
+			// body wasn't JSON — fall through with the raw text.
+	}
+		throw new Error(`HTTP ${res.status} ${path}: ${detail}`);
 	}
 	return (await res.json()) as T;
 }
@@ -71,6 +78,7 @@ export interface KbStatusResponse {
 	root: string;
 	exists: boolean;
 	fileCount: number;
+	error?: string;
 }
 export interface KbInitResponse extends KbStatusResponse {
 	created: boolean;

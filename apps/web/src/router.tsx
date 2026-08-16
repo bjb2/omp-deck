@@ -113,6 +113,10 @@ const router = createBrowserRouter([
 			{ path: "/skills", element: <SkillsView /> },
 			{ path: "/prompts/library", element: <PromptsLibrary /> },
 			{ path: "/prompts/discover", element: <PromptsDiscover /> },
+			// Alias so the Discover tab in the nav rail and any incoming
+			// /discover deep-links resolve to the canonical PromptsDiscover
+			// view without spawning a second panel.
+			{ path: "/discover", element: <Navigate to="/prompts/discover" replace /> },
 			{ path: "/prompts/share/:slug", element: <PromptsShare /> },
 			{ path: "/kb", element: <KbView /> },
 			{ path: "/integrations", element: <IntegrationsView /> },

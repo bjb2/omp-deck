@@ -124,7 +124,10 @@ export function buildKbRouter(service: KbService): Hono {
 			return c.json(body);
 		} catch (err) {
 			log.error(`getStatus failed`, err);
-			return c.json({ error: String(err) }, 500);
+		return c.json(
+			{ root: "", exists: false, fileCount: 0, error: String((err as Error).message ?? err) },
+			500,
+		);
 		}
 	});
 
@@ -155,6 +158,11 @@ function saveResultResponse(
 			return c.json({ error: "already exists" }, 409);
 		case "invalid-path":
 			return c.json({ error: "invalid path (escapes kb root, excluded, or not .md)" }, 400);
+		case "mkdir-failed":
+			return c.json(
+				{ error: `could not create directory: ${result.message}` },
+				{ status: 500 },
+			);
 		case "invalid-frontmatter":
 			return c.json({ error: `invalid frontmatter: ${result.message}` }, 400);
 	}

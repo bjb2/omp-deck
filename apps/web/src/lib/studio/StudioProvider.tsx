@@ -20,7 +20,18 @@
  * Pane mounting uses `IntersectionObserver` (via `<PaneMount />` below) so
  * off-screen panes don't burn CPU. Preset persists in localStorage.
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+	Component,
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ErrorInfo,
+	type ReactNode,
+} from "react";
 
 const PRESET_KEY = "omp-deck:studio:layout-preset";
 
@@ -36,6 +47,8 @@ export type PaneDescriptor = {
 };
 
 export type StudioContextValue = {
+	/** Marker true when returned by the safe fallback (no provider mounted). */
+	__safe?: boolean;
 	panes: Record<string, PaneDescriptor>;
 	register: (p: PaneDescriptor) => () => void;
 	layout: Preset;
@@ -47,16 +60,83 @@ export type StudioContextValue = {
 
 const Ctx = createContext<StudioContextValue | null>(null);
 
+/* ─── Safe default context ──────────────────────────────────────────────────
+ * `useStudio()` used to throw when a pane mounted outside `<StudioProvider>`
+ * (e.g. the gholam deep-link route before the provider mounted, or a pane
+ * being rendered standalone in a Storybook/test). That hard throw was the
+ * root cause of "unexpected application error" crashes that took the whole
+ * Studio page down with no recovery. We now hand back a no-op context so
+ * the pane renders (perhaps less featured) rather than the whole surface
+ * unmounting. Callers that genuinely require registration can detect the
+ * fallback via `ctx.__safe === true`.
+ */
+const SAFE_NOOP: StudioContextValue = Object.freeze({
+	__safe: true,
+	panes: {},
+	register: () => () => undefined,
+	layout: "wide" as Preset,
+	setLayout: () => undefined,
+	resetLayout: () => undefined,
+	focusPane: () => undefined,
+	focusedPane: null,
+});
+
 export function useStudio(): StudioContextValue {
-	const v = useContext(Ctx);
-	if (!v) throw new Error("useStudio() outside <StudioProvider>");
-	return v;
+	return useContext(Ctx) ?? SAFE_NOOP;
+}
+
+/**
+ * Error boundary used by `<StudioProvider>` to isolate pane crashes. A
+ * thrown render in any pane now shows a "Pane crashed" card with a
+ * Recover button instead of taking the whole `/studio` route down.
+ */
+interface StudioBoundaryProps {
+	children: ReactNode;
+	boundaryKey: number;
+	onReset: () => void;
+}
+interface StudioBoundaryState {
+	err: Error | null;
+}
+class StudioErrorBoundary extends Component<StudioBoundaryProps, StudioBoundaryState> {
+	override state: StudioBoundaryState = { err: null };
+	static getDerivedStateFromError(err: Error): StudioBoundaryState {
+		return { err };
+	}
+	override componentDidCatch(err: Error, info: ErrorInfo): void {
+		console.error("[studio] pane crashed:", err, info.componentStack ?? "");
+	}
+	override render(): ReactNode {
+		if (this.state.err) {
+			const message = this.state.err.message || String(this.state.err);
+			return (
+				<div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+					<div className="font-mono text-2xs uppercase tracking-meta text-danger">
+						pane crashed
+					</div>
+					<div className="max-w-md break-words font-mono text-2xs text-ink-2">{message}</div>
+					<button
+						type="button"
+						className="btn-ghost mt-2 h-7 rounded-md border border-line bg-paper-2 px-2 text-xs"
+						onClick={() => {
+							this.setState({ err: null });
+							this.props.onReset();
+						}}
+					>
+						Recover pane
+					</button>
+				</div>
+			);
+		}
+		return this.props.children;
+	}
 }
 
 export function StudioProvider({ children }: { children: ReactNode }): JSX.Element {
 	const [panes, setPanes] = useState<Record<string, PaneDescriptor>>({});
 	const [layout, setLayoutState] = useState<Preset>(() => readPreset());
 	const [focusedPane, setFocusedPane] = useState<string | null>(null);
+	const [boundaryKey, setBoundaryKey] = useState(0);
 
 	const register = useCallback((p: PaneDescriptor) => {
 		setPanes((prev) => ({ ...prev, [p.id]: p }));
@@ -94,7 +174,13 @@ export function StudioProvider({ children }: { children: ReactNode }): JSX.Eleme
 		[panes, register, layout, setLayout, resetLayout, focusPane, focusedPane],
 	);
 
-	return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+	return (
+		<Ctx.Provider value={value}>
+			<StudioErrorBoundary boundaryKey={boundaryKey} onReset={() => setBoundaryKey((k) => k + 1)}>
+				{children}
+			</StudioErrorBoundary>
+		</Ctx.Provider>
+	);
 }
 
 function readPreset(): Preset {

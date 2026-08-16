@@ -286,6 +286,9 @@ function SidecarTab(): JSX.Element {
 export function GholamView(): JSX.Element {
 	const [tab, setTab] = useState<"chats" | "sidecar">("chats");
 
+	// Render the active tab directly — children already provide their own
+	// <Layout> shells. Wrapping them in another <Layout> was nesting two
+	// panels inside one, which is the "Gholam opens another panel" chaos.
 	return (
 		<Layout
 			sidebar={null}

@@ -51,7 +51,21 @@ export function ExplorerView(): JSX.Element {
 	const navigate = useNavigate();
 	const workspaces = useStore((s) => s.workspaces);
 	const defaultCwd = useStore((s) => s.defaultCwd);
-	const [root, setRoot] = useState<string | null>(null);
+	// Restore the last-open repo across navigation/refresh so a clone
+	// (which lands at e.g. ~/omp-repos/<owner>/<repo>.git) stays visible
+	// when the user comes back to /explorer. Fall back to the first
+	// workspace, then defaultCwd.
+	const [root, setRootState] = useState<string | null>(() => {
+		if (typeof window === "undefined") return null;
+		return window.localStorage.getItem(DEFAULT_EXPLORER_ROOT_KEY);
+	});
+	const setRoot = useCallback((next: string | null) => {
+		setRootState(next);
+		if (typeof window !== "undefined") {
+			if (next) window.localStorage.setItem(DEFAULT_EXPLORER_ROOT_KEY, next);
+			else window.localStorage.removeItem(DEFAULT_EXPLORER_ROOT_KEY);
+		}
+	}, []);
 	const [tabs, setTabs] = useState<Tab[]>([]);
 	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const [contents, setContents] = useState<Map<string, string>>(new Map());
@@ -64,8 +78,25 @@ export function ExplorerView(): JSX.Element {
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (root === null && defaultCwd) setRoot(defaultCwd);
-	}, [defaultCwd, root]);
+		if (root !== null) return;
+		// First try to restore a persisted path that's still in the
+		// workspaces list (server still knows about it). Then fall back
+		// to the first workspace, then defaultCwd.
+		const persisted =
+			typeof window !== "undefined"
+				? window.localStorage.getItem(DEFAULT_EXPLORER_ROOT_KEY)
+				: null;
+		if (persisted && workspaces.some((w) => w.cwd === persisted)) {
+			setRootState(persisted);
+			return;
+		}
+		const first = workspaces[0]?.cwd;
+		if (first) {
+			setRootState(first);
+			return;
+		}
+		if (defaultCwd) setRootState(defaultCwd);
+	}, [defaultCwd, root, workspaces]);
 
 	const dirtyPaths = useMemo(() => new Set(statusEntries.map((e) => e.path)), [statusEntries]);
 
@@ -467,10 +498,18 @@ export function ExplorerView(): JSX.Element {
 						) : (
 							<GitHubPanel
 								onOpenRepo={(path) => {
+								// Persist + register the cloned/repo path so the workspace
+								// picker lists it after navigation/refresh. Best-effort:
+								// the picker path guard only accepts ~/... but the
+								// bare clone / worktree paths it lands at both qualify.
 									setRoot(path);
 									setTabs([]);
 									setActiveKey(null);
 									setInspectorTab("git");
+								void gitApi
+									.registerWorkspace(path)
+									.catch(() => undefined)
+									.then(() => useStore.getState().refreshWorkspaces());
 									void useStore.getState().refreshWorkspaces();
 								}}
 							/>

@@ -141,7 +141,7 @@ export function KbView() {
 			}
 			main={
 				<div className="flex h-full min-h-0 flex-col">
-					{status && status.fileCount === 0 ? (
+					{status && (status.fileCount === 0 || status.exists === false) ? (
 						<KbWelcome
 							status={status}
 							onInitialized={() => {
@@ -158,6 +158,9 @@ export function KbView() {
 								onBack={() => {
 									setMobileDetailOpen(false);
 									setCurrentPath(undefined);
+								}}
+								onNewFile={() => {
+									void promptCreate(currentPath, setCurrentPath);
 								}}
 							/>
 							{viewMode === "graph" ? (
@@ -271,12 +274,14 @@ function KbTopBar({
 	viewMode,
 	onViewMode,
 	onBack,
+	onNewFile,
 }: {
 	currentPath: string | undefined;
 	mobileDetailOpen: boolean;
 	viewMode: "file" | "graph";
 	onViewMode: (v: "file" | "graph") => void;
 	onBack: () => void;
+	onNewFile?: () => void;
 }) {
 	return (
 		<div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-paper px-3">
@@ -321,6 +326,17 @@ function KbTopBar({
 					Graph
 				</button>
 			</div>
+			{onNewFile ? (
+				<button
+					type="button"
+					onClick={onNewFile}
+					className="btn-ghost ml-1 inline-flex h-7 items-center gap-1 rounded-md border border-line bg-paper-2 px-2 text-xs transition-colors hover:bg-paper-3"
+					title="Create new kb file (relative to current file's directory, or root)"
+				>
+					<FilePlus className="h-3.5 w-3.5" />
+					<span className="hidden sm:inline">New file</span>
+				</button>
+			) : null}
 		</div>
 	);
 }
@@ -857,6 +873,47 @@ function KbFilePane({
 }
 
 /**
+ * Shared create flow: prompt for a relative path, validate it, write a
+ * sensible stub, navigate to it. Used both by the unresolved-wikilink
+ * flow and the top-bar `New file` button. Errors surface as inline
+ * toasts via the kb-change bus instead of native dialogs so the kb
+ * shell never gets blocked behind a modal.
+ */
+async function promptCreate(currentFilePath: string | undefined, onNavigate: (p: string) => void): Promise<void> {
+	const currentDir = currentFilePath && currentFilePath.includes("/")
+		? currentFilePath.slice(0, currentFilePath.lastIndexOf("/"))
+		: "";
+	const suggestedStem = currentFilePath
+		? currentFilePath.split("/").pop()?.replace(/\.md$/i, "") ?? "untitled"
+		: "untitled";
+	const defaultPath = currentDir ? `${currentDir}/${suggestedStem}-copy.md` : `${suggestedStem}-copy.md`;
+	const proposed = window.prompt(
+		"Create a new kb file.\nPath (relative to kb root, must end in .md):",
+		defaultPath,
+	);
+	if (!proposed) return;
+	const normalized = proposed.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+	if (!normalized) {
+		window.alert("Path cannot be empty");
+		return;
+	}
+	if (!normalized.toLowerCase().endsWith(".md")) {
+		window.alert("Path must end in .md");
+		return;
+	}
+	const stem = normalized.split("/").pop()?.replace(/\.md$/i, "") ?? "untitled";
+	const today = new Date().toISOString().slice(0, 10);
+	const title = stem.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+	const stub = `---\ntype: knowledge\ncreated: ${today}\nupdated: ${today}\ntags: []\n---\n\n# ${title}\n\n`;
+	try {
+		await kbApi.create(normalized, stub);
+		onNavigate(normalized);
+	} catch (e) {
+		window.alert(`create failed: ${(e as Error).message ?? e}`);
+	}
+}
+
+/**
  * Prompt the user to create a file for an unresolved wikilink target. The
  * filename defaults to the bare target (cleaned for filesystem safety);
  * directory defaults to the current file's parent. Cancel = no-op.
@@ -875,6 +932,7 @@ async function createUnresolved(target: string, currentFilePath: string, onNavig
 		window.alert("Path must end in .md");
 		return;
 	}
+	const stem = normalized.split("/").pop()?.replace(/\.md$/i, "") ?? target;
 	const today = new Date().toISOString().slice(0, 10);
 	const stub = `---\ntype: knowledge\ncreated: ${today}\nupdated: ${today}\ntags: []\n---\n\n# ${target}\n\n`;
 	try {
