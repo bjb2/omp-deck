@@ -61,19 +61,30 @@ export function FocusStrip(): JSX.Element {
 	// Idle / collapsed strip — focus mode is enabled but no active session.
 	if (!session) {
 		return (
-			<div className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-paper-2 px-3 py-1 font-mono text-2xs text-ink-3">
+			<div className="sticky top-0 z-30 flex shrink-0 min-w-0 items-center justify-between border-b border-line bg-paper-2 px-3 py-1 font-mono text-2xs text-ink-3">
 				<div className="flex items-center gap-2">
 					<Play className="h-3 w-3 text-ink-4" aria-hidden />
 					<span>Focus off</span>
 				</div>
-				<button
-					type="button"
-					onClick={() => setPickerOpen(true)}
-					className="flex items-center gap-1 rounded border border-line bg-paper px-2 py-0.5 text-ink-2 hover:bg-paper-3"
-				>
-					<Play className="h-3 w-3" />
-					<span>Start focus</span>
-				</button>
+				<div className="flex shrink-0 items-center gap-1">
+					<button
+						type="button"
+						onClick={() => setScheduleOpen(true)}
+						className="flex items-center gap-1 rounded border border-line bg-paper px-2 py-0.5 text-ink-2 hover:bg-paper-3"
+						aria-label="Manage scheduled alerts"
+					>
+						<Calendar className="h-3 w-3" />
+						<span>Schedules</span>
+					</button>
+					<button
+						type="button"
+						onClick={() => setPickerOpen(true)}
+						className="flex items-center gap-1 rounded border border-line bg-paper px-2 py-0.5 text-ink-2 hover:bg-paper-3"
+					>
+						<Play className="h-3 w-3" />
+						<span>Start focus</span>
+					</button>
+				</div>
 				{pickerOpen && (
 					<TaskPicker
 						tasks={tasks}
@@ -90,7 +101,7 @@ export function FocusStrip(): JSX.Element {
 	}
 
 	return (
-		<div className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-paper-2 px-3 py-1.5 font-mono text-2xs text-ink-3">
+		<div className="sticky top-0 z-30 flex shrink-0 min-w-0 items-center gap-3 border-b border-line bg-paper-2 px-3 py-1.5 font-mono text-2xs text-ink-3 overflow-x-auto">
 			<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden>
 				<circle
 					cx="12"
@@ -120,7 +131,7 @@ export function FocusStrip(): JSX.Element {
 				<span className="text-ink-4">·</span>
 				<span className="text-ink-2">{formatMmSs(remainingMs)} left</span>
 			</div>
-			<div className="flex items-center gap-1">
+			<div className="flex shrink-0 items-center gap-1">
 				<button
 					type="button"
 					onClick={() => setPickerOpen(true)}
