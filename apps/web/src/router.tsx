@@ -121,9 +121,19 @@ const router = createBrowserRouter([
 			// §3 + §4 of docs/GENERATIVE.md — pre-update preview + studio shell.
 			// /studio (no pane) is the 3-col grid; /studio/:pane focuses on a single pane.
 			// Worker J (Studio) owns these routes; do not move.
-			{ path: "/studio", element: <StudioView /> },
+			//
+			// A single nested route is required because having two sibling entries
+			// with paths `/studio` and `/studio/:pane` makes react-router throw
+			// "absolute route path '/studio/*' has duplicate param-less route" —
+			// which silently breaks navigation for every other route in the file.
+			{
+				path: "/studio",
+				element: <StudioView />,
+				children: [
+					{ path: ":pane", element: <StudioView /> },
+				],
+			},
 			{ path: "/preview/:route", element: <PreviewView /> },
-			{ path: "/studio/:pane", element: <StudioView /> },
 			// Storefront (§1 of docs/STOREFRONT.md) — discovery, sections, detail.
 			{ path: "/storefront", element: <StorefrontHome /> },
 			{ path: "/storefront/search", element: <StorefrontSearch /> },

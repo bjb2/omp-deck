@@ -170,6 +170,15 @@ function TreeRow({ entry, depth, nodes, selectedPath, dirtyPaths, onToggle, onSe
 					isSelected ? "bg-accent-soft/50 text-ink" : "text-ink-2 hover:bg-paper-3",
 				)}
 				style={{ paddingLeft: `${depth * 14 + 8}px` }}
+				// data-context-key + data-path / data-name: the global
+				// ContextMenu listener walks up to the closest [data-context-key]
+				// ancestor on right-click and dispatches the matching MENUS scope.
+				// Without these attrs a folder/file right-click falls through to
+				// the global.fallback menu (Inspect/Copy selector/Reload) — useless.
+				data-context-key={isDir ? "folder.menu" : "file.menu"}
+				data-path={entry.path}
+				data-name={entry.name}
+				onContextMenu={(e) => e.preventDefault()}
 				onClick={() => (isDir ? onToggle(entry) : onSelect(entry))}
 			>
 				{isDir ? (

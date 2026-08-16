@@ -13,6 +13,7 @@
  * survive soft delete (the chat surfaces a redacted tombstone on read).
  */
 import type { ChatUsage, GholamChat, GholamChatMessage, GholamChatMessageWire } from "@omp-deck/protocol";
+import type { GholamChatModelRole } from "@omp-deck/protocol";
 
 import { getDb, id, nowIso } from "./db/index.ts";
 
@@ -44,6 +45,7 @@ interface ChatRow {
 	kind: string;
 	cwd: string;
 	model: string | null;
+	model_used_json: string | null;
 	state: string;
 	summary: string | null;
 	priority_id: string | null;
@@ -89,6 +91,26 @@ function readMeta(raw: string | null | undefined): GholamChatMessageWire["meta"]
 	}
 }
 
+function parseModelUsed(raw: string | null | undefined): GholamChat["modelUsed"] {
+	if (!raw) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as Partial<GholamChat["modelUsed"]>;
+		if (
+			parsed &&
+			typeof parsed.modelId === "string" &&
+			typeof parsed.role === "string"
+		) {
+			return {
+				modelId: parsed.modelId,
+				role: parsed.role as GholamChatModelRole,
+			};
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function rowToChat(r: ChatRow): GholamChat {
 	const chat: GholamChat = {
 		id: r.id,
@@ -104,6 +126,8 @@ function rowToChat(r: ChatRow): GholamChat {
 	if (r.summary !== null) chat.summary = r.summary;
 	if (r.priority_id !== null) chat.priorityId = r.priority_id;
 	if (r.deleted_at !== null) chat.deletedAt = r.deleted_at;
+	const modelUsed = parseModelUsed(r.model_used_json);
+	if (modelUsed) chat.modelUsed = modelUsed;
 	return chat;
 }
 
@@ -122,7 +146,7 @@ function rowToMessage(r: MessageRow): GholamChatMessage {
 }
 
 const CHAT_COLUMNS =
-	"id, title, kind, cwd, model, state, summary, priority_id, created_at, updated_at, deleted_at, usage_json";
+	"id, title, kind, cwd, model, model_used_json, state, summary, priority_id, created_at, updated_at, deleted_at, usage_json";
 
 const MESSAGE_COLUMNS = "id, chat_id, seq, role, content, meta_json, created_at";
 
@@ -183,6 +207,7 @@ export function createChat(input: {
 	cwd: string;
 	prompt: string;
 	model?: string;
+	modelUsed?: { modelId: string; role: GholamChatModelRole };
 	title?: string;
 	kind?: GholamChatKind;
 	priorityId?: string;
@@ -193,16 +218,21 @@ export function createChat(input: {
 	const now = nowIso();
 	const kind: GholamChatKind = input.kind ?? "user";
 	const title = (input.title?.trim() || deriveTitle(input.prompt)).slice(0, 200);
+	// modelUsed is optional; when the caller passes both model and modelUsed,
+	// the model column takes the registry ref and the JSON column carries the
+	// persisted role. Either alone is persisted independently.
+	const modelUsedJson = input.modelUsed ? JSON.stringify(input.modelUsed) : null;
 	db.transaction(() => {
-		db.prepare<unknown, [string, string, string, string, string | null, string | null, string, string]>(
-			`INSERT INTO gholam_chats (id, title, kind, cwd, model, state, summary, priority_id, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, 'running', NULL, ?, ?, ?)`,
+		db.prepare<unknown, [string, string, string, string, string | null, string | null, string | null, string, string]>(
+			`INSERT INTO gholam_chats (id, title, kind, cwd, model, model_used_json, state, summary, priority_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, 'running', NULL, ?, ?, ?)`,
 		).run(
 			chatId,
 			title,
 			kind,
 			input.cwd,
 			input.model ?? null,
+			modelUsedJson,
 			input.priorityId ?? null,
 			now,
 			now,
@@ -225,6 +255,8 @@ export function appendMessage(
 		role: GholamChatMessage["role"];
 		content: string;
 		meta?: GholamChatMessageWire["meta"];
+		modelId?: string;
+		modelRole?: GholamChatModelRole;
 	},
 ): GholamChatMessage {
 	const db = getDb();
@@ -243,9 +275,15 @@ export function appendMessage(
 			`INSERT INTO gholam_chat_messages (id, chat_id, seq, role, content, meta_json, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		).run(messageId, chatId, nextSeq, msg.role, msg.content.slice(0, 256_000), metaJson, now);
-		db.prepare<unknown, [string, string]>(
-			"UPDATE gholam_chats SET updated_at = ? WHERE id = ?",
-		).run(now, chatId);
+		if (msg.modelId && msg.modelRole) {
+			db.prepare<unknown, [string, string, string]>(
+				"UPDATE gholam_chats SET model_used_json = ?, updated_at = ? WHERE id = ?",
+			).run(JSON.stringify({ modelId: msg.modelId, role: msg.modelRole }), now, chatId);
+		} else {
+			db.prepare<unknown, [string, string]>(
+				"UPDATE gholam_chats SET updated_at = ? WHERE id = ?",
+			).run(now, chatId);
+		}
 		insertedSeq = nextSeq;
 	})();
 	const row = db
@@ -308,6 +346,26 @@ export function listMessages(chatId: string, since?: number): GholamChatMessage[
 /** Mark a chat paused. The runtime loop observes `signal.aborted` and exits. */
 export function cancelChat(chatId: string): GholamChat | null {
 	return updateState(chatId, "paused");
+}
+
+/** Persist the chat's `(modelId, role)` selection. Called from
+ *  `PUT /api/gholam/chats/:id/model` so the composer can change roles
+ *  without restarting the loop. No-op on soft-deleted chats. */
+export function updateChatModelUsed(
+	chatId: string,
+	modelUsed: { modelId: string; role: GholamChatModelRole },
+): GholamChat | null {
+	const existing = getChat(chatId);
+	if (!existing || existing.deletedAt) return null;
+	const json = JSON.stringify(modelUsed);
+	getDb()
+		.prepare<unknown, [string, string, string, string]>(
+			`UPDATE gholam_chats
+			    SET model = ?, model_used_json = ?, updated_at = ?
+			  WHERE id = ?`,
+		)
+		.run(modelUsed.modelId, json, nowIso(), chatId);
+	return getChat(chatId);
 }
 
 /** Patch the `model` registry ref on a chat row. The runtime loop reads

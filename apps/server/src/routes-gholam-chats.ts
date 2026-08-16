@@ -18,6 +18,7 @@ import type {
 	CreateGholamChatMessageRequest,
 	CreateGholamChatRequest,
 	GholamChat,
+	GholamChatModelRole,
 	GholamChatMessage,
 	ListGholamChatMessagesResponse,
 	ListGholamChatsResponse,
@@ -38,9 +39,21 @@ import {
 	restartChat,
 	softDeleteChat,
 	updateChatModel,
+	updateChatModelUsed,
 	updateState,
 } from "./gholam-chats.ts";
 import { logger } from "./log.ts";
+
+const MODEL_ROLES = [
+	"default",
+	"smol",
+	"slow",
+	"vision",
+	"plan",
+	"commit",
+	"tiny",
+	"advisor",
+] as const;
 
 const log = logger("routes:gholam-chats");
 
@@ -170,8 +183,20 @@ export function buildGholamChatsRouter(): Hono {
 		if (typeof body.content !== "string" || !body.content.trim()) {
 			return c.json({ error: "content required" }, 400);
 		}
+		// Optional per-turn model/role override. Handler persists the new
+		// selection so the runtime loop picks it up next turn; the runtime
+		// itself currently reads `chat.model`, so we update that column too.
+		const role = typeof body.role === "string" && (MODEL_ROLES as readonly string[]).includes(body.role)
+			? (body.role as GholamChatModelRole)
+			: undefined;
+		const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
 		try {
-			const msg = appendMessage(id, { role: "user", content: body.content });
+			const msg = appendMessage(id, {
+				role: "user",
+				content: body.content,
+				...(modelId ? { modelId } : {}),
+				...(role ? { modelRole: role } : {}),
+			});
 			const next = updateState(id, "running") ?? chat;
 			broadcastBus.broadcast({
 				type: "gholam_chat_message",
@@ -202,6 +227,32 @@ export function buildGholamChatsRouter(): Hono {
 		if (!updated) return c.json({ error: "chat not found" }, 404);
 		broadcastBus.broadcast({ type: "gholam_chat_state", chatId: id, state: updated.state, usage: updated.usage });
 		return c.json({ chat: updated });
+	});
+
+	// PUT MODEL+ROLE ────────────────────────────────────────────────────
+	// The role selector in the composer hits this on every pill click.
+	// Writes BOTH the legacy `model` column (runtime reads it on every
+	// turn) and `model_used_json` so the wire shape reflects the user's
+	// selection. Validates role against the 8-value MODEL_ROLES allow-list;
+	// rejects empty modelId.
+	app.put("/gholam/chats/:id/model", async (c) => {
+		const access = principalFromReq(c.req.raw);
+		if (!access.allowed) return c.json({ error: "unauthorized" }, 401);
+		const id = c.req.param("id");
+		const chat = requireChat(id);
+		if (chat instanceof Response) return chat;
+		let body: { modelId?: unknown; role?: unknown };
+		try { body = (await c.req.json()) as { modelId?: unknown; role?: unknown }; } catch { return c.json({ error: "invalid json" }, 400); }
+		const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
+		const role = typeof body.role === "string" ? body.role.trim() : "";
+		if (!modelId) return c.json({ error: "modelId required" }, 400);
+		if (!(MODEL_ROLES as readonly string[]).includes(role)) {
+			return c.json({ error: `role must be one of: ${MODEL_ROLES.join(", ")}` }, 400);
+		}
+		const updated = updateChatModelUsed(id, { modelId, role: role as GholamChatModelRole });
+		if (!updated) return c.json({ error: "chat not found" }, 404);
+		broadcastBus.broadcast({ type: "gholam_chat_state", chatId: id, state: updated.state, usage: updated.usage });
+		return c.json({ ok: true });
 	});
 
 	// CANCEL ──────────────────────────────────────────────────────────────

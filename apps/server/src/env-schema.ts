@@ -372,6 +372,15 @@ export const ENV_SCHEMA: EnvSchemaEntry[] = [
 		description:
 			"Deck-session org root the maintenance-gate uses to anchor captures. Set automatically by the server to ~/kb unless overridden or disabled.",
 	},
+	{
+		key: "OMP_DECK_CLONE_ROOT",
+		valueType: "path",
+		sensitive: false,
+		restartRequired: false,
+		hotApply: true,
+		description:
+			"Workspace root that the GitHub clone button targets. When unset, clones go to the first available workspace root (HOME on most systems). Set to e.g. ~/workspace to keep clones organized out of your home directory. Created on boot if missing.",
+	},
 ];
 
 export const ENV_SCHEMA_BY_KEY = new Map(ENV_SCHEMA.map((entry) => [entry.key, entry]));

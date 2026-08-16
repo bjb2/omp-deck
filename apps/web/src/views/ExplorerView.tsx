@@ -5,7 +5,8 @@
  * by either the CodeMirror editor or the diff viewer. Inspector: Git status
  * / GitHub repos, tabbed.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
 	Circle,
 	Diff as DiffIcon,
@@ -47,6 +48,7 @@ function tabKey(tab: Tab): string {
 }
 
 export function ExplorerView(): JSX.Element {
+	const navigate = useNavigate();
 	const workspaces = useStore((s) => s.workspaces);
 	const defaultCwd = useStore((s) => s.defaultCwd);
 	const [root, setRoot] = useState<string | null>(null);
@@ -197,6 +199,73 @@ export function ExplorerView(): JSX.Element {
 			setError(err instanceof Error ? err.message : String(err));
 		}
 	}
+
+	// The folder.menu / file.menu context-menu dispatchers in tooltip-catalog
+	// fire CustomEvents on window rather than calling handlers directly (so
+	// the explorer didn't need a ref to the FileTree). Bridge those events
+	// back into the existing handlers here. Refs let the listener attach once
+	// and always read the latest closure of `createFile` / `createFolder` /
+	// `deleteEntry` / `openFile`, which capture per-render state.
+	const handlersRef = useRef({
+		createFile: createFile,
+		createFolder: createFolder,
+		deleteEntry: deleteEntry,
+		openFile: openFile,
+	});
+	handlersRef.current = { createFile, createFolder, deleteEntry, openFile };
+
+	useEffect(() => {
+		function onFolderAction(e: Event): void {
+			const detail = (e as CustomEvent<{ kind: string; path: string }>).detail;
+			if (!detail?.path) return;
+			const { createFile, createFolder, deleteEntry } = handlersRef.current;
+			if (detail.kind === "new-file") void createFile(detail.path);
+			else if (detail.kind === "new-folder") void createFolder(detail.path);
+			else if (detail.kind === "open-in-chat") {
+				useStore.getState().setPendingDraft({ text: `Open file: ${detail.path}` });
+				navigate("/chat");
+			} else if (detail.kind === "delete") {
+				deleteEntry({
+					name: detail.path.split("/").pop() ?? detail.path,
+					path: detail.path,
+					kind: "dir",
+					sizeBytes: 0,
+					modifiedAt: null,
+				});
+			}
+		}
+		function onFileAction(e: Event): void {
+			const detail = (e as CustomEvent<{ kind: string; path: string }>).detail;
+			if (!detail?.path) return;
+			const { openFile, deleteEntry } = handlersRef.current;
+			if (detail.kind === "open") {
+				void openFile({
+					name: detail.path.split("/").pop() ?? detail.path,
+					path: detail.path,
+					kind: "file",
+					sizeBytes: 0,
+					modifiedAt: null,
+				});
+			} else if (detail.kind === "open-in-chat") {
+				useStore.getState().setPendingDraft({ text: `Open file: ${detail.path}` });
+				navigate("/chat");
+			} else if (detail.kind === "delete") {
+				deleteEntry({
+					name: detail.path.split("/").pop() ?? detail.path,
+					path: detail.path,
+					kind: "file",
+					sizeBytes: 0,
+					modifiedAt: null,
+				});
+			}
+		}
+		window.addEventListener("omp:folder-action", onFolderAction);
+		window.addEventListener("omp:file-action", onFileAction);
+		return () => {
+			window.removeEventListener("omp:folder-action", onFolderAction);
+			window.removeEventListener("omp:file-action", onFileAction);
+		};
+	}, [navigate]);
 
 	// Global Ctrl/Cmd+S — the editor's own keymap only fires while it has
 	// focus; this catches the shortcut from anywhere in the view (e.g. right
@@ -402,6 +471,7 @@ export function ExplorerView(): JSX.Element {
 									setTabs([]);
 									setActiveKey(null);
 									setInspectorTab("git");
+									void useStore.getState().refreshWorkspaces();
 								}}
 							/>
 						)}

@@ -10,6 +10,13 @@ export interface Config {
 	agentDir?: string;
 	webDist?: string;
 	devMode: boolean;
+	/**
+	 * Resolved absolute path of `OMP_DECK_CLONE_ROOT`. When set, the GitHub
+	 * clone button targets this directory instead of the first available
+	 * workspace root (typically HOME). Created on boot if missing. Undefined
+	 * preserves legacy behavior.
+	 */
+	defaultCloneRoot?: string;
 	/** Ms a session may sit without WS subscribers before the reaper disposes it. 0 disables. */
 	idleTimeoutMs: number;
 	/** Absolute path to the sqlite database file. */
@@ -104,6 +111,22 @@ export function loadConfig(): Config {
 	const extra = splitList(process.env.OMP_DECK_WORKSPACES);
 	const agentDir = process.env.OMP_AGENT_DIR?.trim() || undefined;
 	const webDist = resolveWebDist();
+	const cloneRootRaw = process.env.OMP_DECK_CLONE_ROOT?.trim();
+	const defaultCloneRoot = cloneRootRaw
+		? (() => {
+				// Expand a leading "~" or "~/" to the user's home directory; bail
+				// out of the expansion silently for other shells (e.g. "~user") —
+				// OS-native homedir handles the common case, and an exotic
+				// expansion that fails path.resolve() would only confuse the
+				// clone flow later.
+				const expanded = cloneRootRaw === "~" || cloneRootRaw.startsWith("~/")
+					? home + cloneRootRaw.slice(1)
+					: cloneRootRaw;
+				const resolved = path.resolve(expanded);
+				fs.mkdirSync(resolved, { recursive: true });
+				return resolved;
+			})()
+		: undefined;
 
 	return {
 		host: process.env.OMP_DECK_HOST?.trim() || "127.0.0.1",
@@ -113,6 +136,7 @@ export function loadConfig(): Config {
 		agentDir,
 		webDist,
 		devMode: process.env.NODE_ENV !== "production",
+		defaultCloneRoot,
 		// 5 minutes default. Set to 0 to disable reaping (kernels live until SIGINT).
 		idleTimeoutMs: parseInt10(process.env.OMP_DECK_IDLE_TIMEOUT_MS, 5 * 60_000),
 		dbPath: path.resolve(

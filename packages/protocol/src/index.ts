@@ -2568,6 +2568,9 @@ export interface GholamChat {
 	state: GholamChatState;
 	summary?: string;
 	priorityId?: string;
+	/** Selected `(modelId, role)` the user picked in the composer. Decoupled
+	 *  from `model` so the role travels alongside any picked model ref. */
+	modelUsed?: GholamChatModelUsed;
 	usage: ChatUsage;
 	createdAt: string;
 	updatedAt: string;
@@ -2631,10 +2634,39 @@ export interface CreateGholamChatRequest {
 
 export interface CreateGholamChatMessageRequest {
 	content: string;
+	/** Optional per-turn model ref override (provider/model id). */
+	modelId?: string;
+	/** Optional per-turn role override (e.g. `smol`, `slow`). */
+	role?: GholamChatModelRole;
 }
 
 export interface RestartGholamChatRequest {
 	prompt: string;
+}
+
+/** OMP harness model roles the chat composer exposes. Mirrors the role ids the
+ *  harness advertises (`default`, `smol`, `slow`, `vision`, `plan`, `commit`,
+ *  `tiny`, `advisor`). */
+export type GholamChatModelRole =
+	| "default"
+	| "smol"
+	| "slow"
+	| "vision"
+	| "plan"
+	| "commit"
+	| "tiny"
+	| "advisor";
+
+/** Persisted `(modelId, role)` selection for a chat. */
+export interface GholamChatModelUsed {
+	modelId: string;
+	role: GholamChatModelRole;
+}
+
+/** Body of `PUT /api/gholam/chats/:id/model`. */
+export interface UpdateGholamChatModelRequest {
+	modelId: string;
+	role: GholamChatModelRole;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
