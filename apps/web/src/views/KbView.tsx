@@ -32,6 +32,7 @@ import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { KbGraphPane } from "./KbGraphPane";
 import { KbCommandPalette } from "./KbCommandPalette";
+import { RichEditor } from "@/components/RichEditor";
 
 /**
  * /kb — Karpathy-style llm-wiki viewer. Sidebar = tree; main = markdown
@@ -841,11 +842,10 @@ function KbFilePane({
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
 				{editing ? (
-					<textarea
+					<RichEditor
 						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						spellCheck={false}
-						autoFocus
+						onChange={(v) => setDraft(v)}
+						disableRichText={false}
 						className="h-full min-h-[60vh] w-full resize-none whitespace-pre-wrap break-words rounded-md border border-line bg-paper-2 p-3 font-mono text-xs leading-relaxed text-ink focus:border-accent focus:outline-none"
 					/>
 				) : (

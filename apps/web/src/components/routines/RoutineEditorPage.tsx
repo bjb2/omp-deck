@@ -6,6 +6,8 @@ import { routinesApi } from "@/lib/routines-api";
 
 import { RoutineBuilder } from "./RoutineBuilder";
 
+import { RichEditor } from "@/components/RichEditor";
+
 type Mode = "v0" | "v1";
 
 interface Props {
@@ -254,7 +256,24 @@ function V0EditorPage({
 							</button>
 						))}
 					</div>
-					<textarea value={form.actionBody} onChange={(e) => update("actionBody", e.target.value)} rows={6} placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""} className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed" />
+					{form.actionKind === "prompt" ? (
+						<RichEditor
+							value={form.actionBody}
+							onChange={(v) => update("actionBody", v)}
+							rows={6}
+							placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""}
+							disableRichText={false}
+							className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed"
+						/>
+					) : (
+						<textarea
+							value={form.actionBody}
+							onChange={(e) => update("actionBody", e.target.value)}
+							rows={6}
+							placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""}
+							className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed"
+						/>
+					)}
 				</Field>
 				<Field label="Working directory (optional)">
 					<input value={form.actionCwd} onChange={(e) => update("actionCwd", e.target.value)} placeholder="defaults to server cwd" className="field h-8 w-full px-2 font-mono text-xs" />

@@ -34,6 +34,7 @@ const log = logger("routes");
 const VALID_GROUP_BY = new Set(["repo", "status", "urgency", "importance"]);
 
 import { buildTasksRouter } from "./routes-tasks.ts";
+import { buildAutoKanbanRouter } from "./routes-auto-kanban.ts";
 import { buildSettingsRouter } from "./routes-settings.ts";
 import { buildRoutinesRouter } from "./routes-routines.ts";
 import { buildHooksRouter } from "./routes-hooks.ts";
@@ -66,6 +67,7 @@ import { buildPromptsRouter } from "./routes-prompts.ts";
 import { buildMcpInstallRouter } from "./routes-mcp-install.ts";
 import { buildSkillsInstallRouter } from "./routes-skills-install.ts";
 import { buildStorefrontInstalledRouter } from "./routes-storefront-installed.ts";
+import { buildTranscribeRouter } from "./routes-transcribe.ts";
 import { buildGholamChatsRouter } from "./routes-gholam-chats.ts";
 import { buildRoutesOverview } from "./routes-overview.ts";
 import { buildLLMRouter } from "./routes-llm.ts";
@@ -380,9 +382,13 @@ export function buildRouter(
 	});
 
 	app.route("/", buildTasksRouter(bridge));
+	app.route("/", buildAutoKanbanRouter());
 	app.route("/", buildReposRouter());
 	app.route("/", buildWorktreesRouter());
 	app.route("/", buildUploadsRouter({ uploadsRoot: config.uploadsRoot }));
+	// Voice transcription sidecar (`whisper-cpp`). Returns 501 without
+	// WHISPER_BIN in the environment; otherwise shells out per request.
+	app.route("/", buildTranscribeRouter());
 	app.route("/", buildRoutinesRouter(runner));
 	app.route("/", buildHooksRouter(runner));
 	app.route("/", buildInboxRouter());

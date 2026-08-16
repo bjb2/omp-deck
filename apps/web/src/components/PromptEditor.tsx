@@ -4,6 +4,7 @@ import { Check, Loader2, Tag, Variable } from "lucide-react";
 import type { Prompt } from "@omp-deck/protocol";
 
 import { Markdown } from "@/lib/markdown";
+import { RichEditor } from "@/components/RichEditor";
 import { loadDraft, saveDraft, clearDraft } from "@/lib/drafts";
 import { cn } from "@/lib/utils";
 
@@ -208,18 +209,12 @@ export function PromptEditor({
 
 			<div className="min-h-0 flex-1 overflow-auto">
 				{tab === "edit" ? (
-					<textarea
-						className="h-full w-full resize-none bg-transparent p-3 font-mono text-xs text-ink placeholder:text-ink-3 focus:outline-none"
-						placeholder="Prompt body — markdown, {{variables}} get extracted"
+					<RichEditor
 						value={value.body}
-						onChange={(e) => onChange({ body: e.target.value })}
-						onKeyDown={(e) => {
-							if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-								e.preventDefault();
-								onCommit?.();
-							}
-						}}
-						onBlur={() => onCommit?.()}
+						onChange={(body) => onChange({ body })}
+						placeholder="Prompt body — markdown, {{variables}} get extracted"
+						disableRichText={false}
+						className="h-full w-full bg-transparent p-3 font-mono text-xs text-ink placeholder:text-ink-3 focus:outline-none"
 					/>
 				) : (
 					<div className="p-3">

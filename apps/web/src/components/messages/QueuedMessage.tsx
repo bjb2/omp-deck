@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { Check, Pencil, X } from "lucide-react";
 
 import type { QueuedPrompt } from "@/lib/types";
 import { Markdown } from "@/lib/markdown";
 import { useStore } from "@/lib/store";
+import { RichEditor } from "@/components/RichEditor";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,7 +27,6 @@ export function QueuedMessage({ msg }: { msg: QueuedPrompt }) {
 
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(msg.text);
-	const taRef = useRef<HTMLTextAreaElement>(null);
 
 	// Keep the draft in sync with server-driven text changes (a concurrent
 	// edit from another tab, or the bridge re-aligning the text against the
@@ -39,8 +39,12 @@ export function QueuedMessage({ msg }: { msg: QueuedPrompt }) {
 	function startEdit(): void {
 		setDraft(msg.text);
 		setEditing(true);
+		// RichEditor renders a <textarea> internally; locate it via the
+		// queued-bubble attribute. Falls back to no-op if not yet mounted.
 		queueMicrotask(() => {
-			const ta = taRef.current;
+			const ta = document.querySelector<HTMLTextAreaElement>(
+				`textarea[data-queued-edit="${msg.id}"]`,
+			);
 			if (!ta) return;
 			autoresize(ta);
 			ta.focus();
@@ -129,15 +133,12 @@ export function QueuedMessage({ msg }: { msg: QueuedPrompt }) {
 
 			{editing ? (
 				<div className="space-y-1.5">
-					<textarea
-						ref={taRef}
+					<RichEditor
 						value={draft}
-						onChange={(e) => {
-							setDraft(e.target.value);
-							autoresize(e.currentTarget);
-						}}
+						onChange={(v) => setDraft(v)}
 						onKeyDown={handleKey}
 						rows={1}
+						data-queued-edit={msg.id}
 						placeholder="Edit queued prompt (empty = cancel)"
 						className={cn(
 							"w-full resize-none rounded-md border border-accent/40 bg-paper-2 px-2 py-1.5",
