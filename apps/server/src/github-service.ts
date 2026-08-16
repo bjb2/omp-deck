@@ -9,6 +9,7 @@
 import { $ } from "bun";
 
 import type { GitHubBranch, GitHubCommit, GitHubPullRequest, GitHubRepoSummary, GitHubViewer } from "@omp-deck/protocol";
+import { loadConfig } from "./config.ts";
 import { guardWorkspacePath, workspaceRoots } from "./path-guard.ts";
 import { logger } from "./log.ts";
 
@@ -205,13 +206,14 @@ export async function cloneRepo(fullName: string, opts: { intoRoot?: string } = 
 	const repo = await api<{ clone_url: string; name: string; default_branch: string }>(`/repos/${fullName}`);
 
 	const roots = workspaceRoots();
+	const configuredCloneRoot = !opts.intoRoot ? loadConfig().defaultCloneRoot : undefined;
 	const targetRoot = opts.intoRoot
 		? (() => {
 				const guard = guardWorkspacePath(opts.intoRoot!, { mustExist: true });
 				if (!guard.ok || !guard.resolved) throw new GuardError(guard.reason ?? "intoRoot is not allowed");
 				return guard.resolved;
 			})()
-		: roots[0];
+		: (configuredCloneRoot ?? roots[0]);
 	if (!targetRoot) throw new GuardError("no workspace root available to clone into");
 
 	const dest = `${targetRoot}/${repo.name}`;

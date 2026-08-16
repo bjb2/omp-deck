@@ -8,8 +8,22 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Pause, RefreshCcw, Trash2 } from "lucide-react";
-import type { GholamChat, GholamChatMessageWire } from "@omp-deck/protocol";
+import { ArrowLeft, Pause, RefreshCcw, Send, Trash2 } from "lucide-react";
+import type { GholamChat, GholamChatMessageWire, GholamChatModelRole } from "@omp-deck/protocol";
+
+// 8-level role picker — mirrors the OMP harness modelRoles config. The
+// active role gets a highlighted background; clicking another pill PATCHes
+// the chat's (modelId, role) via PUT /api/gholam/chats/:id/model.
+const ROLES: ReadonlyArray<{ id: GholamChatModelRole; label: string }> = [
+	{ id: "default", label: "Default" },
+	{ id: "smol", label: "Smol" },
+	{ id: "slow", label: "Slow" },
+	{ id: "tiny", label: "Tiny" },
+	{ id: "advisor", label: "Advisor" },
+	{ id: "vision", label: "Vision" },
+	{ id: "plan", label: "Plan" },
+	{ id: "commit", label: "Commit" },
+];
 
 import { Layout } from "@/components/Layout";
 import { ChatHistorySidebar } from "@/components/gholam/ChatHistorySidebar";
@@ -74,6 +88,23 @@ export function GholamChatView() {
 	const [messages, setMessages] = useState<GholamChatMessageWire[]>([]);
 	const [error, setError] = useState<string | undefined>();
 	const counter = useStore((s) => s.gholamChatChangeCounter);
+	// Composer state. The composer is a single textarea + role row above
+	// the message list; GholamChatView was previously read-only — the OMP
+	// chat surface needs an in-place send path so the multi-agent role
+	// selector has somewhere to live.
+	const [draft, setDraft] = useState<string>("");
+	const [busy, setBusy] = useState<boolean>(false);
+	const [role, setRole] = useState<GholamChatModelRole>("default");
+	const [roleBusy, setRoleBusy] = useState<GholamChatModelRole | null>(null);
+
+	// Sync the role pill from the chat on every fetch / refresh. Server is
+	// the source of truth; if the user picks a role in another tab, this
+	// chats' UI follows.
+	useEffect(() => {
+		if (!chat) return;
+		const next = chat.modelUsed?.role ?? "default";
+		setRole(next);
+	}, [chat?.modelUsed?.role, chat?.id]);
 
 	const refresh = useCallback(async (): Promise<void> => {
 		if (!chatId) return;
@@ -153,6 +184,57 @@ export function GholamChatView() {
 			if (previous) {
 				useStore.getState().upsertGholamChat(previous);
 			}
+		}
+	}
+
+	async function pickRole(nextRole: GholamChatModelRole): Promise<void> {
+		if (!chatId) return;
+		if (nextRole === role) return;
+		const modelId = chat?.model?.trim() || "";
+		// The server requires a non-empty modelId — disable the picker
+		// until the user has chosen a model, rather than fabricate one.
+		if (!modelId) {
+			setError("Pick a model before choosing a role.");
+			return;
+		}
+		setRoleBusy(nextRole);
+		const previous = chat;
+		setRole(nextRole);
+		setChat((prev) => (prev ? { ...prev, modelUsed: { modelId, role: nextRole } } : prev));
+		if (previous) {
+			useStore.getState().upsertGholamChat({ ...previous, modelUsed: { modelId, role: nextRole } });
+		}
+		try {
+			await gholamChatApi.selectModel(chatId, modelId, nextRole);
+		} catch (err) {
+			setError(String(err));
+			setRole(role);
+			if (previous) setChat(previous);
+		} finally {
+			setRoleBusy(null);
+		}
+	}
+
+	async function sendDraft(): Promise<void> {
+		if (!chatId) return;
+		const text = draft.trim();
+		if (!text || busy) return;
+		setBusy(true);
+		setError(undefined);
+		try {
+			const result = await gholamChatApi.appendMessage(chatId, {
+				content: text,
+				...(chat?.model?.trim() ? { modelId: chat!.model!.trim() } : {}),
+				role,
+			});
+			setMessages((prev) => [...prev, result.message]);
+			setChat(result.chat);
+			useStore.getState().upsertGholamChat(result.chat);
+			setDraft("");
+		} catch (err) {
+			setError(String(err));
+		} finally {
+			setBusy(false);
 		}
 	}
 
@@ -261,6 +343,66 @@ export function GholamChatView() {
 						<span className="font-mono text-2xs text-ink-3">
 							model: {chat.model ?? "default"}
 						</span>
+					</div>
+
+					{/* Multi-agent role picker. 8 pills — Default / Smol / Slow /
+					    Tiny / Advisor / Vision / Plan / Commit. Click PATCHes the
+					    chat's (modelId, role) via PUT /api/gholam/chats/:id/model.
+					    Active pill gets an accent background; the rows disable when
+					    no model is picked yet (the server requires a non-empty
+					    modelId to persist a role). */}
+					<div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Model role">
+						{ROLES.map((r) => {
+							const active = role === r.id;
+							const disabled = roleBusy === r.id || !chat.model?.trim();
+							return (
+								<button
+									key={r.id}
+									type="button"
+									role="radio"
+									aria-checked={active}
+									disabled={disabled}
+									onClick={() => void pickRole(r.id)}
+									className={cn(
+										"rounded border px-2.5 py-1 font-mono text-2xs uppercase tracking-wider transition-colors",
+										active
+											? "border-accent/60 bg-accent-soft text-ink"
+											: "border-line bg-paper-2 text-ink-3 hover:bg-paper-3",
+										disabled && "opacity-50",
+									)}
+								>
+									{r.label}
+								</button>
+							);
+						})}
+					</div>
+
+					{/* Composer — textarea + send. Single-line for compact
+					    rendering; the runtime loop reads the same REST surface as
+					    the orchestrator. Sending passes modelId + role so the
+					    server can persist the role alongside the model. */}
+					<div className="flex shrink-0 items-end gap-2 rounded border border-line bg-paper-2 p-2">
+						<textarea
+							value={draft}
+							onChange={(e) => setDraft(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !e.shiftKey) {
+									e.preventDefault();
+									void sendDraft();
+								}
+							}}
+							placeholder="Send a follow-up — Enter sends, Shift+Enter newline"
+							rows={2}
+							className="flex-1 resize-y rounded border border-line bg-paper px-2 py-1 font-mono text-2xs text-ink"
+						/>
+						<button
+							type="button"
+							disabled={busy || !draft.trim()}
+							onClick={() => void sendDraft()}
+							className="flex items-center gap-1 rounded border border-line bg-paper px-3 py-1 font-mono text-2xs text-ink hover:bg-paper-3 disabled:opacity-50"
+						>
+							<Send size={12} /> Send
+						</button>
 					</div>
 
 					<div className="flex flex-1 flex-col gap-3 overflow-y-auto">

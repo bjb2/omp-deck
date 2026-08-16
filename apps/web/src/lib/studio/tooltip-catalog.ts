@@ -40,7 +40,7 @@
  */
 import type { MenuAction } from "./ContextMenu";
 
-export const TOOLTIP_CATALOG_VERSION = 3;
+export const TOOLTIP_CATALOG_VERSION = 4;
 
 export type TooltipEntry = {
 	title: string;
@@ -938,6 +938,52 @@ export const MENUS: Record<string, MenuEntry> = {
 				{ id: "focus", label: "Focus pane", capability: "open", icon: "external-link", handler: () => undefined },
 				{ id: "close", label: "Close pane", capability: "edit", icon: "trash", handler: () => undefined },
 				{ id: "copy-pane-id", label: "Copy pane id", capability: "edit", icon: "copy", handler: () => { if (c?.pane?.id) void navigator.clipboard.writeText(c.pane.id); } },
+			];
+		},
+	},
+
+	// ─── File explorer ──────────────────────────────────────────────
+	// Right-click on a folder / file row in the explorer tree. The handlers
+	// dispatch a `CustomEvent` because the menu lives at the layout root and
+	// must not import explorer internals (would re-import the menu catalog
+	// and cycle). The ExplorerView listener converts events into its existing
+	// createFile/createFolder/delete/openFile callbacks.
+	"folder.menu": {
+		scope: "folder.menu",
+		since: "0.6.1",
+		actions: (ctx) => {
+			const c = (ctx ?? {}) as { path?: string; name?: string };
+			const path = c.path ?? "";
+			const name = c.name ?? "";
+			const dispatch = (kind: "new-file" | "new-folder" | "open-in-chat" | "delete"): void => {
+				if (typeof window === "undefined") return;
+				window.dispatchEvent(new CustomEvent("omp:folder-action", { detail: { kind, path } }));
+			};
+			return [
+				{ id: "new-file", label: "New file here…", capability: "edit", icon: "plus", handler: () => dispatch("new-file") },
+				{ id: "new-folder", label: "New folder here…", capability: "edit", icon: "plus", handler: () => dispatch("new-folder") },
+				{ id: "copy-path", label: "Copy path", capability: "edit", icon: "copy", handler: () => { if (path) void navigator.clipboard.writeText(path); } },
+				{ id: "open-in-chat", label: "Open in chat", capability: "execute", icon: "external-link", handler: () => dispatch("open-in-chat") },
+				{ id: "delete-folder", label: `Delete "${name}"`, danger: true, capability: "danger", icon: "trash", handler: () => dispatch("delete") },
+			];
+		},
+	},
+	"file.menu": {
+		scope: "file.menu",
+		since: "0.6.1",
+		actions: (ctx) => {
+			const c = (ctx ?? {}) as { path?: string; name?: string };
+			const path = c.path ?? "";
+			const name = c.name ?? "";
+			const dispatch = (kind: "open" | "open-in-chat" | "delete"): void => {
+				if (typeof window === "undefined") return;
+				window.dispatchEvent(new CustomEvent("omp:file-action", { detail: { kind, path } }));
+			};
+			return [
+				{ id: "open-file", label: "Open file", accelerator: "Enter", capability: "open", icon: "edit", handler: () => dispatch("open") },
+				{ id: "copy-path", label: "Copy path", capability: "edit", icon: "copy", handler: () => { if (path) void navigator.clipboard.writeText(path); } },
+				{ id: "open-in-chat", label: "Open in chat", capability: "execute", icon: "external-link", handler: () => dispatch("open-in-chat") },
+				{ id: "delete-file", label: `Delete "${name}"`, danger: true, capability: "danger", icon: "trash", handler: () => dispatch("delete") },
 			];
 		},
 	},

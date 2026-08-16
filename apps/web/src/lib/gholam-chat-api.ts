@@ -11,6 +11,7 @@ import type {
 	CreateGholamChatRequest,
 	GholamChat,
 	GholamChatMessage,
+	GholamChatModelRole,
 	RestartGholamChatRequest,
 } from "@omp-deck/protocol";
 
@@ -53,6 +54,12 @@ export const gholamChatApi = {
 		return request(`/gholam/chats/${encodeURIComponent(id)}/messages`, {
 			method: "POST",
 			body: JSON.stringify(body),
+		});
+	},
+	selectModel(id: string, modelId: string, role: GholamChatModelRole): Promise<{ ok: true }> {
+		return request(`/gholam/chats/${encodeURIComponent(id)}/model`, {
+			method: "PUT",
+			body: JSON.stringify({ modelId, role }),
 		});
 	},
 	cancel(id: string): Promise<GholamChat> {
