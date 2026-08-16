@@ -26,6 +26,12 @@ export interface SessionMeta {
 	repoId: string | null;
 	worktree: string | null;
 	updatedAt: string;
+	/** AI-generated one-line summary. Empty until `regenerate-meta` runs. */
+	aiSummary: string;
+	/** AI-generated tags. Serialised JSON array in the row, parsed here. */
+	aiTags: string[];
+	/** ISO timestamp of the last successful AI regeneration. Empty until set. */
+	aiGeneratedAt: string;
 }
 
 /** Defaults applied whenever no row exists for a session id. */
@@ -38,6 +44,9 @@ export const SESSION_META_DEFAULTS: SessionMeta = {
 	repoId: null,
 	worktree: null,
 	updatedAt: "",
+	aiSummary: "",
+	aiTags: [],
+	aiGeneratedAt: "",
 };
 
 interface SessionMetaRow {
@@ -49,6 +58,20 @@ interface SessionMetaRow {
 	repo_id: string | null;
 	worktree: string | null;
 	updated_at: string;
+	ai_summary: string | null;
+	ai_tags: string | null;
+	ai_generated_at: string | null;
+}
+
+function parseAiTags(raw: string | null): string[] {
+	if (!raw) return [];
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter((t): t is string => typeof t === "string").slice(0, 5);
+	} catch {
+		return [];
+	}
 }
 
 function rowToMeta(r: SessionMetaRow): SessionMeta {
@@ -61,13 +84,16 @@ function rowToMeta(r: SessionMetaRow): SessionMeta {
 		repoId: r.repo_id,
 		worktree: r.worktree,
 		updatedAt: r.updated_at,
+		aiSummary: r.ai_summary ?? "",
+		aiTags: parseAiTags(r.ai_tags),
+		aiGeneratedAt: r.ai_generated_at ?? "",
 	};
 }
 
 export function getSessionMeta(id: string): SessionMeta | null {
 	const row = getDb()
 		.query<SessionMetaRow, [string]>(
-			"SELECT id, archived, urgency, importance, status, repo_id, worktree, updated_at FROM session WHERE id = ?",
+			"SELECT id, archived, urgency, importance, status, repo_id, worktree, updated_at, ai_summary, ai_tags, ai_generated_at FROM session WHERE id = ?",
 		)
 		.get(id);
 	return row ? rowToMeta(row) : null;
@@ -79,7 +105,7 @@ export function listSessionMeta(ids: string[]): Map<string, SessionMeta> {
 	const placeholders = ids.map(() => "?").join(",");
 	const rows = getDb()
 		.query<SessionMetaRow, string[]>(
-			`SELECT id, archived, urgency, importance, status, repo_id, worktree, updated_at
+			`SELECT id, archived, urgency, importance, status, repo_id, worktree, updated_at, ai_summary, ai_tags, ai_generated_at
 			 FROM session WHERE id IN (${placeholders})`,
 		)
 		.all(...ids);
@@ -95,6 +121,12 @@ export interface SessionMetaPatch {
 	status?: SessionStatus;
 	repoId?: string | null;
 	worktree?: string | null;
+	/** Patch the AI summary column. String, not text-NULLed — pass "" to clear. */
+	aiSummary?: string;
+	/** Patch the AI tags column. Serialised as JSON in the row. */
+	aiTags?: string[];
+	/** Patch the AI generated-at column. Pass nowIso() to set. */
+	aiGeneratedAt?: string;
 }
 
 /** Patch metadata for one session. Creates the row if missing. Returns the
@@ -112,11 +144,14 @@ export function patchSessionMeta(id: string, patch: SessionMetaPatch): SessionMe
 		repoId: patch.repoId !== undefined ? patch.repoId : (existing?.repoId ?? null),
 		worktree: patch.worktree !== undefined ? patch.worktree : (existing?.worktree ?? null),
 		updatedAt: now,
+		aiSummary: patch.aiSummary ?? existing?.aiSummary ?? "",
+		aiTags: patch.aiTags ?? existing?.aiTags ?? [],
+		aiGeneratedAt: patch.aiGeneratedAt ?? existing?.aiGeneratedAt ?? "",
 	};
 	getDb()
-		.prepare<unknown, [string, number, string, string, string, string | null, string | null, string]>(
-			`INSERT INTO session (id, archived, urgency, importance, status, repo_id, worktree, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		.prepare<unknown, [string, number, string, string, string, string | null, string | null, string, string, string, string]>(
+			`INSERT INTO session (id, archived, urgency, importance, status, repo_id, worktree, updated_at, ai_summary, ai_tags, ai_generated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET
 			   archived = excluded.archived,
 			   urgency = excluded.urgency,
@@ -124,7 +159,10 @@ export function patchSessionMeta(id: string, patch: SessionMetaPatch): SessionMe
 			   status = excluded.status,
 			   repo_id = excluded.repo_id,
 			   worktree = excluded.worktree,
-			   updated_at = excluded.updated_at`,
+			   updated_at = excluded.updated_at,
+			   ai_summary = excluded.ai_summary,
+			   ai_tags = excluded.ai_tags,
+			   ai_generated_at = excluded.ai_generated_at`,
 		)
 		.run(
 			next.id,
@@ -135,6 +173,9 @@ export function patchSessionMeta(id: string, patch: SessionMetaPatch): SessionMe
 			next.repoId,
 			next.worktree,
 			next.updatedAt,
+			next.aiSummary,
+			JSON.stringify(next.aiTags),
+			next.aiGeneratedAt,
 		);
 	return next;
 }
@@ -149,7 +190,7 @@ export function deleteSessionMeta(id: string): boolean {
  * contribute the defaults. Pure projection — does not mutate the input.
  */
 export function decorateSessions<
-	T extends { id: string; archived?: boolean; urgency?: SessionUrgency; importance?: SessionImportance; status?: SessionStatus; repoId?: string; worktree?: string },
+	T extends { id: string; archived?: boolean; urgency?: SessionUrgency; importance?: SessionImportance; status?: SessionStatus; repoId?: string; worktree?: string; aiSummary?: string; aiTags?: string[]; aiGeneratedAt?: string },
 >(rows: T[]): T[] {
 	if (rows.length === 0) return rows;
 	const ids = rows.map((r) => r.id);
@@ -162,6 +203,9 @@ export function decorateSessions<
 		const status = row.status ?? m?.status ?? "active";
 		const repoId = row.repoId ?? m?.repoId ?? null;
 		const worktree = row.worktree ?? m?.worktree ?? null;
+		const aiSummary = row.aiSummary ?? m?.aiSummary ?? "";
+		const aiTags = row.aiTags ?? m?.aiTags ?? [];
+		const aiGeneratedAt = row.aiGeneratedAt ?? m?.aiGeneratedAt ?? "";
 		return {
 			...row,
 			archived,
@@ -170,6 +214,9 @@ export function decorateSessions<
 			status,
 			...(repoId !== null ? { repoId } : {}),
 			...(worktree !== null ? { worktree } : {}),
+			aiSummary,
+			aiTags,
+			aiGeneratedAt,
 		};
 	});
 }

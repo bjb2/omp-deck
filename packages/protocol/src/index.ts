@@ -47,6 +47,15 @@ export interface SessionSummary {
 	repoId?: string;
 	/** Worktree branch the session is bound to; resolved to a path on read. */
 	worktree?: string;
+	/**
+	 * AI-generated one-sentence description of the session. Persisted as
+	 * `session.ai_summary` (TEXT); populated by `POST /api/sessions/:id/regenerate-meta`.
+	 */
+	aiSummary?: string;
+	/** AI-generated short tags (≤5). Persisted as `session.ai_tags` (JSON array string). */
+	aiTags?: string[];
+	/** ISO timestamp the AI metadata was last generated. `session.ai_generated_at`. */
+	aiGeneratedAt?: string;
 }
 
 export interface WorkspaceEntry {
@@ -2703,4 +2712,56 @@ export interface CreateWorktreeResponse {
  *  insertion order of the matched sessions. Empty buckets are omitted. */
 export interface GroupedSessionsResponse {
 	groups: Array<{ key: string; sessions: SessionSummary[] }>;
+}
+/**
+ * Full AI metadata bag returned by `POST /api/sessions/:id/regenerate-meta`.
+ * Combines AI-computed title/tags/summary with the three deck-managed dials
+ * (urgency/importance/status) so a single call can hydrate the entire row.
+ * The server does NOT persist the dial fields from this path — they live
+ * on the existing `session` row and are written via `PATCH /api/sessions/:id/meta`.
+ */
+export interface AiMeta {
+	/** AI-composed title; ≤60 chars. */
+	title: string;
+	/** AI-composed tags; 0..5 short tokens. */
+	tags: string[];
+	/** AI-suggested urgency. */
+	urgency: SessionUrgency;
+	/** AI-suggested importance. */
+	importance: SessionImportance;
+	/** AI-suggested status. */
+	status: SessionStatus;
+	/** AI-summarised one-sentence description; ≤200 chars. */
+	summary: string;
+}
+
+/** Body of `POST /api/sessions/:id/regenerate-meta`. */
+export interface RegenerateMetaRequest {
+	/** Bypass the server-side cache and force a fresh LLM call. */
+	force?: boolean;
+	/** Override the default cheap model for this call (e.g. "minimax/MiniMax-M3"). */
+	model?: string;
+}
+
+/** Response body of `POST /api/sessions/:id/regenerate-meta`. */
+export interface RegenerateMetaResponse {
+	ok: true;
+	meta: AiMeta;
+}
+
+/**
+ * Body of `PATCH /api/sessions/:id/meta`. Any subset of fields; unspecified
+ * fields are left unchanged. At least one field must be supplied.
+ */
+export interface PatchSessionMetaRequest {
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+}
+
+/** Response body of `PATCH /api/sessions/:id/meta`. Echoes the resulting row. */
+export interface PatchSessionMetaResponse {
+	ok: true;
+	meta: SessionSummary;
 }

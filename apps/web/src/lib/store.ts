@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
 import type {
+	AiMeta,
 	DeployState,
 	ExtUiDialogResponse,
 	GholamChat,
@@ -10,8 +11,11 @@ import type {
 	McpHealthResponse,
 	McpHealthStatus,
 	Prompt,
+	SessionImportance,
 	PromptRecommendation,
 	ListSessionsResponse,
+	SessionStatus,
+	SessionUrgency,
 	ListWorkspacesResponse,
 	NotificationLevel,
 	PendingPlanApprovalWire,
@@ -44,7 +48,7 @@ export interface NotificationItem {
 const MAX_NOTIFICATIONS = 50;
 
 import { api } from "./api";
-import { applyEvent, initSession } from "./reducer";
+import { applyEvent, initSession, initSessionWithMeta } from "./reducer";
 import type { SessionUi } from "./types";
 import { WsClient, type WsStatus } from "./ws";
 
@@ -97,6 +101,13 @@ interface StoreState {
 
 	// Track subscriptions to avoid duplicate subscribe messages.
 	subscribed: Set<string>;
+
+	/**
+	 * Session ids the user has manually renamed via the chat header. The
+	 * server skips `setName()` for these when an AI regenerate arrives, so
+	 * the user's title is never silently overwritten.
+	 */
+	userRenamed: Set<string>;
 
 	/**
 	 * Tool-card view state. `allCollapsed` is the bulk default; `perCard` holds
@@ -236,7 +247,7 @@ interface StoreState {
 	disconnect(): void;
 	refreshWorkspaces(): Promise<void>;
 	refreshSessions(cwd?: string): Promise<void>;
-	createSession(opts: { cwd: string; resumeFromPath?: string }): Promise<string>;
+	createSession(opts: { cwd: string; resumeFromPath?: string; repoId?: string; worktreeBranch?: string }): Promise<string>;
 	selectSession(id: string): void;
 	sendPrompt(text: string, images?: import("@omp-deck/protocol").ImageAttachment[]): void;
 	abort(): void;
@@ -251,6 +262,17 @@ interface StoreState {
 	editQueued(queuedId: string, text: string, images?: import("@omp-deck/protocol").ImageAttachment[]): void;
 	disposeSession(id: string): Promise<void>;
 	renameSession(id: string, name: string): Promise<void>;
+	/**
+	 * Server-side AI metadata regen. Returns the full `AiMeta` bag so the
+	 * caller can apply it (the sidebar patch is already mirrored into
+	 * `sessionsById` and `sessions` before this resolves).
+	 */
+	regenerateSessionAiMeta(id: string, opts?: { force?: boolean }): Promise<AiMeta>;
+	setSessionUrgency(id: string, urgency: SessionUrgency): Promise<void>;
+	setSessionImportance(id: string, importance: SessionImportance): Promise<void>;
+	archiveSession(id: string): Promise<void>;
+	/** Mark a session id as user-renamed so AI regenerates skip setName. */
+	markSessionUserRenamed(id: string): void;
 	toggleAllToolCards(): void;
 	setToolCardOpen(id: string, open: boolean): void;
 	setPendingDraft(draft: { text: string } | undefined): void;
@@ -318,6 +340,7 @@ export const useStore = create<StoreState>()(
 		sessionsById: {},
 		activeId: readLastSession(),
 		subscribed: new Set<string>(),
+		userRenamed: new Set<string>(),
 		toolView: { allCollapsed: false, perCard: {} },
 		tasksChangeCounter: 0,
 		skillsChangeCounter: 0,
@@ -403,6 +426,8 @@ export const useStore = create<StoreState>()(
 			const created = await api.createSession({
 				cwd: opts.cwd,
 				...(opts.resumeFromPath ? { resumeFromPath: opts.resumeFromPath } : {}),
+				...(opts.repoId ? { repoId: opts.repoId } : {}),
+				...(opts.worktreeBranch ? { worktreeBranch: opts.worktreeBranch } : {}),
 			});
 			// Subscribe immediately; reducer will hydrate from the `subscribed` snapshot.
 			get().ws?.send({ type: "subscribe", sessionId: created.sessionId });
@@ -490,6 +515,84 @@ export const useStore = create<StoreState>()(
 					: s.sessionsById;
 				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, title: name } : r));
 				return { sessionsById: next, sessions };
+			});
+		},
+		async regenerateSessionAiMeta(id, opts) {
+			const resp = await api.regenerateSessionMeta(id, opts ?? {});
+			const meta = resp.meta;
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const now = new Date().toISOString();
+				const nextUi = ui
+					? {
+							...ui,
+							sessionAiTitle: meta.title,
+							aiMeta: meta,
+							meta: {
+								...ui.meta,
+								aiSummary: meta.summary,
+								aiTags: meta.tags,
+								aiGeneratedAt: now,
+								// AI-suggested dials are surfaced so the sidebar can
+								// render them, but only applied if the user hasn't
+								// already chosen a different value via setSession*().
+								urgency: ui.meta?.urgency ?? meta.urgency,
+								importance: ui.meta?.importance ?? meta.importance,
+							},
+						}
+					: ui;
+				const sessions = s.sessions.map((r) => (r.id === id
+					? { ...r, aiSummary: meta.summary, aiTags: meta.tags, aiGeneratedAt: now }
+					: r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+			return meta;
+		},
+		async setSessionUrgency(id, urgency) {
+			await api.patchSessionMeta(id, { urgency });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, urgency } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, urgency } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async setSessionImportance(id, importance) {
+			await api.patchSessionMeta(id, { importance });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, importance } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, importance } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async archiveSession(id) {
+			await api.patchSessionMeta(id, { archived: true });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, archived: true } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, archived: true } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		markSessionUserRenamed(id) {
+			set((s) => {
+				if (s.userRenamed.has(id)) return {};
+				const next = new Set(s.userRenamed);
+				next.add(id);
+				return { userRenamed: next };
 			});
 		},
 
@@ -752,12 +855,25 @@ function handleFrame(
 			return;
 
 		case "subscribed":
-			set((s) => ({
-				sessionsById: {
-					...s.sessionsById,
-					[frame.sessionId]: initSession(frame.snapshot),
-				},
-			}));
+			set((s) => {
+				const summary = s.sessions.find((r) => r.id === frame.sessionId);
+				const baseMeta = summary
+					? {
+							urgency: summary.urgency,
+							importance: summary.importance,
+							archived: summary.archived,
+							aiSummary: summary.aiSummary,
+							aiTags: summary.aiTags,
+							aiGeneratedAt: summary.aiGeneratedAt,
+						}
+					: undefined;
+				return {
+					sessionsById: {
+						...s.sessionsById,
+						[frame.sessionId]: initSessionWithMeta(frame.snapshot, baseMeta),
+					},
+				};
+			});
 			return;
 
 		case "unsubscribed":

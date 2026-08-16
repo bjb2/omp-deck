@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { cn, shortPath } from "@/lib/utils";
+import { shortPath } from "@/lib/utils";
+import { NewSessionModal } from "@/components/sessions/NewSessionModal";
+import { SessionRow, urgencyRank } from "@/components/sessions/SessionRow";
+import type { SessionSummary } from "@omp-deck/protocol";
+import type { SessionUi } from "@/lib/types";
 
 export function Sidebar() {
 	const workspaces = useStore((s) => s.workspaces);
@@ -13,9 +17,14 @@ export function Sidebar() {
 	const refreshWorkspaces = useStore((s) => s.refreshWorkspaces);
 	const createSession = useStore((s) => s.createSession);
 	const selectSession = useStore((s) => s.selectSession);
+	const regenerateSessionAiMeta = useStore((s) => s.regenerateSessionAiMeta);
+	const setSessionUrgency = useStore((s) => s.setSessionUrgency);
+	const setSessionImportance = useStore((s) => s.setSessionImportance);
+	const archiveSession = useStore((s) => s.archiveSession);
 
 	const [selectedCwd, setSelectedCwd] = useState<string | "">("");
 	const [creating, setCreating] = useState(false);
+	const [modalOpen, setModalOpen] = useState(false);
 
 	const cwdInUse = selectedCwd || defaultCwd;
 
@@ -48,8 +57,27 @@ export function Sidebar() {
 		}
 	}
 
+	async function handleDirectNew(cwd: string): Promise<void> {
+		setCreating(true);
+		try {
+			await createSession({ cwd });
+		} catch (err) {
+			console.error(err);
+			alert(`Failed to create session: ${String(err)}`);
+		} finally {
+			setCreating(false);
+		}
+	}
+
 	const liveSessions = Object.values(sessionsById);
-	const persisted = filtered.filter((s) => !sessionsById[s.id]);
+	const persisted = filtered
+		.filter((s) => !sessionsById[s.id])
+		.slice()
+		.sort((a, b) => {
+			const u = urgencyRank(b.urgency) - urgencyRank(a.urgency);
+			if (u !== 0) return u;
+			return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+		});
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -87,12 +115,36 @@ export function Sidebar() {
 				<button
 					type="button"
 					className="btn-primary h-8 w-full text-[13px]"
-					onClick={() => void handleNew()}
-					disabled={creating}
+					onClick={() => setModalOpen(true)}
+					disabled={creating || !defaultCwd}
 				>
 					<Plus className="h-3.5 w-3.5" />
 					New session
 				</button>
+				{workspaces.length > 0 ? (
+					<div className="flex flex-col gap-0.5">
+						<div className="meta">Quick · recent</div>
+						{workspaces.slice(0, 3).map((w) => (
+							<button
+								key={w.cwd}
+								type="button"
+								disabled={creating}
+								onClick={() => void handleDirectNew(w.cwd)}
+								className="btn-ghost flex h-7 items-center justify-between px-2 text-left text-xs"
+							>
+								<span className="truncate">{w.label}</span>
+								<span className="ml-2 shrink-0 font-mono text-2xs text-ink-3">{shortPath(w.cwd, 20)}</span>
+							</button>
+						))}
+					</div>
+				) : null}
+				<NewSessionModal
+					open={modalOpen}
+					onClose={() => setModalOpen(false)}
+					onCreated={() => {
+						/* activeId is set by the store; nothing to do here */
+					}}
+				/>
 			</div>
 
 			<div className="flex items-center justify-between px-3 pt-3 pb-1">
@@ -111,12 +163,19 @@ export function Sidebar() {
 				{liveSessions.map((s) => (
 					<SessionRow
 						key={s.sessionId}
-						title={s.sessionName || formatSessionId(s.sessionId)}
+						summary={liveSummaryFromUi(s)}
+						title={s.sessionName ?? undefined}
 						subtitle={shortPath(s.cwd, 30)}
-						active={s.sessionId === activeId}
 						live
 						planMode={s.planMode?.enabled === true}
+						active={s.sessionId === activeId}
+						updatedAt={s.meta?.aiGeneratedAt ?? undefined}
+						sessionId={s.sessionId}
 						onClick={() => selectSession(s.sessionId)}
+						onArchive={(id) => void archiveSession(id)}
+						onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+						onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+						onSetImportance={(id, i) => void setSessionImportance(id, i)}
 					/>
 				))}
 
@@ -127,10 +186,13 @@ export function Sidebar() {
 				{persisted.map((s) => (
 					<SessionRow
 						key={s.id}
-						title={s.title || formatSessionId(s.id)}
-						subtitle={`${shortPath(s.cwd, 26)} · ${s.messageCount}m`}
-						meta={formatRelative(s.updatedAt || s.createdAt)}
+						summary={s}
+						subtitle={shortPath(s.cwd, 30)}
 						onClick={() => void handleResume(s.path)}
+						onArchive={(id) => void archiveSession(id)}
+						onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+						onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+						onSetImportance={(id, i) => void setSessionImportance(id, i)}
 					/>
 				))}
 
@@ -144,85 +206,29 @@ export function Sidebar() {
 	);
 }
 
-function SessionRow({
-	title,
-	subtitle,
-	meta,
-	active,
-	live,
-	planMode,
-	onClick,
-}: {
-	title: string;
-	subtitle?: string;
-	meta?: string;
-	active?: boolean;
-	live?: boolean;
-	planMode?: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={cn(
-				"group block w-full rounded-md px-2 py-1.5 text-left text-[13px] transition-colors",
-				active ? "bg-paper-3 text-ink" : "text-ink-2 hover:bg-paper-3/60",
-			)}
-		>
-			<div className="flex items-center gap-1.5">
-				{live ? (
-					<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-label="live" />
-				) : (
-					<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-line-strong" />
-				)}
-				<span className="truncate">{title}</span>
-				{planMode ? (
-					<span
-						className="ml-auto shrink-0 rounded border border-thinking/40 bg-thinking/10 px-1 py-px font-mono text-[10px] uppercase tracking-meta text-thinking"
-						title="Plan mode active"
-					>
-						plan
-					</span>
-				) : null}
-			</div>
-			{subtitle ? (
-				<div className="mt-0.5 truncate pl-3 font-mono text-2xs text-ink-3">
-					{subtitle}
-				</div>
-			) : null}
-			{meta ? (
-				<div className="truncate pl-3 font-mono text-2xs text-ink-4">{meta}</div>
-			) : null}
-		</button>
-	);
-}
-
-function formatSessionId(id: string): string {
-	if (id.length <= 8) return id;
-	return `${id.slice(0, 4)}…${id.slice(-4)}`;
-}
-
-const RELATIVE_THRESHOLDS: Array<[number, string]> = [
-	[60_000, "just now"],
-	[3_600_000, "m"],
-	[86_400_000, "h"],
-	[2_592_000_000, "d"],
-];
-
-function formatRelative(ts: string): string {
-	if (!ts) return "";
-	const d = new Date(ts);
-	if (Number.isNaN(d.getTime())) return ts;
-	const diff = Date.now() - d.getTime();
-	if (diff < 0) return d.toLocaleDateString();
-	const first = RELATIVE_THRESHOLDS[0];
-	if (!first || diff < first[0]) return "just now";
-	for (let i = 1; i < RELATIVE_THRESHOLDS.length; i++) {
-		const cur = RELATIVE_THRESHOLDS[i];
-		const prev = RELATIVE_THRESHOLDS[i - 1];
-		if (!cur || !prev) continue;
-		if (diff < cur[0]) return `${Math.floor(diff / prev[0])}${cur[1]} ago`;
-	}
-	return d.toLocaleDateString();
+/**
+ * Build a SessionSummary-shaped value from a live SessionUi so the shared
+ * SessionRow can render urgency/importance/AI tags/etc. without knowing
+ * about the UI session type. Only the fields SessionRow actually reads
+ * are populated; everything else is filled with safe defaults.
+ */
+function liveSummaryFromUi(s: SessionUi): SessionSummary {
+	return {
+		id: s.sessionId,
+		path: s.sessionFile ?? s.cwd,
+		cwd: s.cwd,
+		title: s.sessionName,
+		createdAt: "",
+		updatedAt: s.meta?.aiGeneratedAt ?? "",
+		messageCount: s.usage.totalTokens > 0 ? 1 : 0,
+		urgency: s.meta?.urgency,
+		importance: s.meta?.importance,
+		status: s.meta?.archived ? "archived" : "active",
+		archived: s.meta?.archived,
+		aiSummary: s.meta?.aiSummary,
+		aiTags: s.meta?.aiTags,
+		aiGeneratedAt: s.meta?.aiGeneratedAt,
+		repoId: undefined,
+		worktree: undefined,
+	};
 }

@@ -7,6 +7,7 @@
  */
 
 import type { AgentSessionEventJson, SessionSnapshot } from "@omp-deck/protocol";
+import type { SessionImportance, SessionStatus, SessionUrgency } from "@omp-deck/protocol";
 
 import type {
 	AssistantContentBlock,
@@ -59,6 +60,41 @@ export function initSession(snapshot: SessionSnapshot): SessionUi {
 		ingestMessage(state, m);
 	}
 	return state;
+}
+
+/**
+ * Optional deck-managed meta to fold in when the live session loads. The
+ * sidebar reads urgency/importance/status/archived/ai* from the persisted
+ * `SessionSummary` row; merging them here means every code path that
+ * hydrates a session (initial subscribe, post-dispose resubscribe, deep
+ * link from URL) picks them up without a second refetch.
+ */
+export interface SessionInitMeta {
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+	archived?: boolean;
+	aiSummary?: string;
+	aiTags?: string[];
+	aiGeneratedAt?: string;
+}
+
+/** Same as {@link initSession} but merges deck-managed meta from the persisted row. */
+export function initSessionWithMeta(snapshot: SessionSnapshot, meta?: SessionInitMeta): SessionUi {
+	const ui = initSession(snapshot);
+	if (!meta) return ui;
+	const nextMeta = {
+		urgency: meta.urgency ?? ui.meta?.urgency,
+		importance: meta.importance ?? ui.meta?.importance,
+		archived: meta.archived ?? ui.meta?.archived,
+		aiSummary: meta.aiSummary ?? ui.meta?.aiSummary,
+		aiTags: meta.aiTags ?? ui.meta?.aiTags,
+		aiGeneratedAt: meta.aiGeneratedAt ?? ui.meta?.aiGeneratedAt,
+	};
+	return {
+		...ui,
+		meta: nextMeta,
+	};
 }
 
 export function applyEvent(state: SessionUi, event: AgentSessionEventJson): SessionUi {

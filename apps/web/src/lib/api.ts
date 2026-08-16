@@ -1,10 +1,17 @@
 import type {
+	AiMeta,
 	CreateSessionRequest,
 	CreateSessionResponse,
+	PatchSessionMetaRequest,
+	PatchSessionMetaResponse,
+	RegenerateMetaRequest,
+	RegenerateMetaResponse,
 	ListFilePathsResponse,
 	ListModelsResponse,
+	ListReposResponse,
 	ListSessionsResponse,
 	ListSlashCommandsResponse,
+	ListWorktreesResponse,
 	ListWorkspacesResponse,
 	ModelRef,
 } from "@omp-deck/protocol";
@@ -45,6 +52,14 @@ export const api = {
 			body: JSON.stringify(body),
 		});
 	},
+	listRepos(): Promise<ListReposResponse> {
+		return request<ListReposResponse>("/repos");
+	},
+	listWorktrees(owner: string, repo: string): Promise<ListWorktreesResponse> {
+		return request<ListWorktreesResponse>(
+			`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/worktrees`,
+		);
+	},
 	abortSession(id: string): Promise<{ ok: true }> {
 		return request(`/sessions/${encodeURIComponent(id)}/abort`, { method: "POST" });
 	},
@@ -75,6 +90,18 @@ export const api = {
 	},
 	disposeSession(id: string): Promise<{ ok: true }> {
 		return request(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+	},
+	regenerateSessionMeta(id: string, opts?: RegenerateMetaRequest): Promise<RegenerateMetaResponse> {
+		return request<RegenerateMetaResponse>(`/sessions/${encodeURIComponent(id)}/regenerate-meta`, {
+			method: "POST",
+			body: JSON.stringify(opts ?? {}),
+		});
+	},
+	patchSessionMeta(id: string, patch: PatchSessionMetaRequest): Promise<PatchSessionMetaResponse> {
+		return request<PatchSessionMetaResponse>(`/sessions/${encodeURIComponent(id)}/meta`, {
+			method: "PATCH",
+			body: JSON.stringify(patch),
+		});
 	},
 	listSlashCommands(cwd?: string): Promise<ListSlashCommandsResponse> {
 		const q = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";

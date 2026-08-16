@@ -6,7 +6,15 @@
  * raw SDK events.
  */
 
-import type { ModelRef, PendingPlanApprovalWire, PlanModeContextWire } from "@omp-deck/protocol";
+import type {
+	AiMeta,
+	ModelRef,
+	PendingPlanApprovalWire,
+	PlanModeContextWire,
+	SessionImportance,
+	SessionStatus,
+	SessionUrgency,
+} from "@omp-deck/protocol";
 
 // ─── Content blocks ────────────────────────────────────────────────────────
 
@@ -248,4 +256,26 @@ export interface SessionUi {
 	 */
 	planMode?: PlanModeContextWire;
 	pendingPlanApproval?: PendingPlanApprovalWire;
+	/**
+	 * Deck-managed session metadata (urgency / importance / archived /
+	 * AI-generated summary+tags). Mirrored from the persisted
+	 * `SessionSummary` row on subscribe; mutated via the store's
+	 * `setSessionUrgency` / `setSessionImportance` / `archiveSession` /
+	 * `regenerateSessionAiMeta` actions. The runtime `status` field above
+	 * intentionally remains the lifecycle slot; this bag only carries the
+	 * user-facing dials. `undefined` until the persisted row is merged in.
+	 */
+	meta?: {
+		urgency?: SessionUrgency;
+		importance?: SessionImportance;
+		archived?: boolean;
+		aiSummary?: string;
+		aiTags?: string[];
+		aiGeneratedAt?: string;
+	};
+	/** Latest AI-computed title for the session (separate from `sessionName`
+	 *  which is the user-overridable display name). */
+	sessionAiTitle?: string;
+	/** Full AI metadata bag (cached for the sidebar to render the latest AI snapshot). */
+	aiMeta?: AiMeta;
 }
