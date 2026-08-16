@@ -11,8 +11,8 @@
  * a priority here lands it in the sidecar's queue file; the next heartbeat
  * picks it up.
  */
-import { useCallback, useEffect, useState } from "react";
-import { Heart, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Heart, Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/Button";
@@ -46,16 +46,36 @@ export function GholamView(): JSX.Element {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 
+	const everOnlineRef = useRef(false);
+	const [lastOfflineError, setLastOfflineError] = useState<string | undefined>();
+
 	const refresh = useCallback(async (): Promise<void> => {
+	try {
+		const [statusRes, priorRes] = await Promise.all([
+			fetch("/api/gholam/status").then((r) => r.json() as Promise<GholamState>),
+			fetch("/api/gholam/priorities").then((r) => r.json() as Promise<{ priorities: Priority[] }>),
+		]);
+		setState(statusRes);
+		setPriorities(priorRes.priorities ?? []);
+		everOnlineRef.current = true;
+		setLastOfflineError(undefined);
+	} catch (e) {
+		setError(String((e as Error).message ?? e));
+		setLastOfflineError(String((e as Error).message ?? e));
+	}
+	}, []);
+
+	const retryStatus = useCallback(async (): Promise<void> => {
 		try {
-			const [statusRes, priorRes] = await Promise.all([
-				fetch("/api/gholam/status").then((r) => r.json() as Promise<GholamState>),
-				fetch("/api/gholam/priorities").then((r) => r.json() as Promise<{ priorities: Priority[] }>),
-			]);
-			setState(statusRes);
-			setPriorities(priorRes.priorities ?? []);
+			const res = await fetch("/api/gholam/status");
+			if (!res.ok) throw new Error(`/api/gholam/status → ${res.status}`);
+			const next = (await res.json()) as GholamState;
+			setState(next);
+			everOnlineRef.current = true;
+			setLastOfflineError(undefined);
+			setError(undefined);
 		} catch (e) {
-			setError(String((e as Error).message ?? e));
+			setLastOfflineError(String((e as Error).message ?? e));
 		}
 	}, []);
 
@@ -171,6 +191,19 @@ export function GholamView(): JSX.Element {
 					</div>
 					{error ? (
 						<div className="mx-3 mt-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">{error}</div>
+					) : null}
+					{(!state && everOnlineRef.current === false) || (state && state.running === false) || (!state && everOnlineRef.current === true) ? (
+						<div className="mx-3 mt-2 flex flex-col items-center justify-center gap-3 rounded-md border border-line bg-paper-2 p-6 text-center">
+							<div className="text-sm font-medium text-ink-2">
+								{state && state.running === false ? "Sidecar offline" : "Sidecar unreachable"}
+							</div>
+							<div className="font-mono text-xs text-ink-3">
+								{lastOfflineError ? `sidecar unreachable: ${lastOfflineError}` : state?.running === false ? "Gholam sidecar is currently stopped." : "sidecar unreachable"}
+							</div>
+							<Button onClick={() => void retryStatus()} size="sm" variant="ghost" data-tooltip-key="gholam.retry">
+								<RefreshCw className="h-3.5 w-3.5" /> Try again
+							</Button>
+						</div>
 					) : null}
 					<div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-4">
 						<section>

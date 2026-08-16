@@ -122,7 +122,7 @@ export function WorkflowsView(): JSX.Element {
 							) : null}
 						</dl>
 					) : (
-						<em>No workflow dispatched yet.</em>
+						<div className="meta">No workflow dispatched yet.</div>
 					)}
 				</div>
 			}

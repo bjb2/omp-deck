@@ -66,13 +66,19 @@ export function OverviewView() {
 	const [range, setRange] = useState<OverviewWindow>("7d");
 	const [data, setData] = useState<OverviewResponse | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | undefined>();
 
 	useEffect(() => {
 		let alive = true;
 		setLoading(true);
+		setError(undefined);
 		void overviewApi.get(range).then((res) => {
 			if (!alive) return;
 			setData(res);
+			setLoading(false);
+		}).catch((err) => {
+			if (!alive) return;
+			setError(String((err as Error).message ?? err));
 			setLoading(false);
 		});
 		return () => {
@@ -125,6 +131,12 @@ export function OverviewView() {
 								))}
 							</div>
 						</header>
+
+						{error ? (
+							<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">
+								{error}
+							</div>
+						) : null}
 
 						{/* Right now — one thing. */}
 						<section className="flex flex-col gap-4 rounded-2xl border border-line bg-paper-2 px-6 py-6">

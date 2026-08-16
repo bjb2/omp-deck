@@ -54,9 +54,18 @@ function openGholamWs(): void {
 	if (gholamWsState === "open" || gholamWsState === "connecting") return;
 	const port = state.wsPort;
 	const token = state.gholamToken;
-	if (!port || !token) return;
+	if (!token) return;
 	gholamWsState = "connecting";
-	gholamWsUrl = `ws://127.0.0.1:${port}/ws`;
+	const rawWsUrl = process.env.GHOLAM_WS_URL?.trim() || "";
+	if (rawWsUrl) {
+		const base = rawWsUrl.replace(/\/+$/, "");
+		gholamWsUrl = base.endsWith("/ws") ? base : `${base}/ws`;
+	} else if (port) {
+		gholamWsUrl = `ws://127.0.0.1:${port}/ws`;
+	} else {
+		gholamWsState = "idle";
+		return;
+	}
 	// Bun's WebSocket constructor accepts protocols as the second/third
 	// argument. The sidecar reads the `omp-gholam-v1, <token>` suffix and
 	// rejects upgrades whose token does not match `GHOLAM_DECK_TOKEN`.
@@ -498,7 +507,9 @@ export async function parseRemoteOwnerRepo(cwd: string): Promise<{ owner: string
 }
 
 async function spawnSidecar(): Promise<number> {
-	const candidate = path.join(process.cwd(), "apps", "gholam", "src", "index.ts");
+	const containerCandidate = path.resolve(process.cwd(), "..", "gholam", "src", "index.ts");
+	const cwdCandidate = path.join(process.cwd(), "apps", "gholam", "src", "index.ts");
+	const candidate = existsSync(containerCandidate) ? containerCandidate : cwdCandidate;
 	const port = 47_000 + Math.floor(Math.random() * 5_000);
 	if (!existsSync(candidate)) {
 		// Sidecar source not yet present — we ship it later in this turn.

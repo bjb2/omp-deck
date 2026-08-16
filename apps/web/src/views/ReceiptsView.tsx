@@ -17,13 +17,20 @@ export function ReceiptsView() {
 	const [selectedDate, setSelectedDate] = useState<string>(todayLocalDate());
 	const [receipts, setReceipts] = useState<ReceiptEntry[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | undefined>();
 
 	useEffect(() => {
 		let active = true;
 		setLoading(true);
+		setError(undefined);
 		overviewApi.receipts(selectedDate).then((res) => {
 			if (active) {
 				setReceipts(res.receipts ?? []);
+				setLoading(false);
+			}
+		}).catch((err) => {
+			if (active) {
+				setError(String((err as Error).message ?? err));
 				setLoading(false);
 			}
 		});
@@ -65,6 +72,12 @@ export function ReceiptsView() {
 							/>
 						</div>
 					</header>
+
+					{error ? (
+						<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">
+							{error}
+						</div>
+					) : null}
 
 					{loading ? (
 						<div className="flex flex-col gap-3">

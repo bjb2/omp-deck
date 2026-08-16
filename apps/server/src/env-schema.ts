@@ -372,6 +372,16 @@ export const ENV_SCHEMA: EnvSchemaEntry[] = [
 		description:
 			"Deck-session org root the maintenance-gate uses to anchor captures. Set automatically by the server to ~/kb unless overridden or disabled.",
 	},
+	{
+		key: "GHOLAM_WS_URL",
+		defaultValue: "",
+		valueType: "string",
+		sensitive: false,
+		restartRequired: false,
+		hotApply: false,
+		description:
+			"Optional external gholam sidecar WS URL. If set, the deck connects to this address instead of spawning a local sidecar. Useful when gholam runs as a separate Docker container in OpenShip.",
+	},
 ];
 
 export const ENV_SCHEMA_BY_KEY = new Map(ENV_SCHEMA.map((entry) => [entry.key, entry]));

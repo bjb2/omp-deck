@@ -138,8 +138,14 @@ export function GholamChatView() {
 				sidebar={null}
 				inspector={null}
 				main={
-					<div className="flex h-full items-center justify-center font-mono text-2xs text-ink-3">
-						{error ? error : "Loading chat…"}
+					<div className="flex h-full items-center justify-center p-6">
+						{error ? (
+							<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">
+								{error}
+							</div>
+						) : (
+							<div className="meta">Loading chat…</div>
+						)}
 					</div>
 				}
 			/>
