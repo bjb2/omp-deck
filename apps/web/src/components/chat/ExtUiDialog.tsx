@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ServerFrame } from "@omp-deck/protocol";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { RichEditor } from "@/components/RichEditor";
 import { useStore } from "@/lib/store";
 
 type OpenFrame = Extract<ServerFrame, { type: "ext_ui_dialog_open" }>;
@@ -215,15 +216,15 @@ interface EditorBodyProps {
 
 function EditorBody({ dialog, onSubmit, onCancel }: EditorBodyProps): JSX.Element {
 	const [value, setValue] = useState(dialog.prefill ?? "");
-	const taRef = useRef<HTMLTextAreaElement>(null);
+	const taRef = useRef<HTMLTextAreaElement | null>(null);
 
 	useEffect(() => {
-		taRef.current?.focus();
+		const ta = taRef.current;
+		if (!ta) return;
+		ta.focus();
 		// Place cursor at end of prefill so the user can append.
-		if (taRef.current) {
-			const len = taRef.current.value.length;
-			taRef.current.setSelectionRange(len, len);
-		}
+		const len = ta.value.length;
+		ta.setSelectionRange(len, len);
 	}, []);
 
 	return (
@@ -234,10 +235,10 @@ function EditorBody({ dialog, onSubmit, onCancel }: EditorBodyProps): JSX.Elemen
 				onSubmit(value);
 			}}
 		>
-			<textarea
+			<RichEditor
 				ref={taRef}
 				value={value}
-				onChange={(e) => setValue(e.target.value)}
+				onChange={(v) => setValue(v)}
 				onKeyDown={(e) => {
 					// Ctrl/Cmd+Enter submits, plain Enter inserts newline.
 					if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -246,6 +247,7 @@ function EditorBody({ dialog, onSubmit, onCancel }: EditorBodyProps): JSX.Elemen
 					}
 				}}
 				rows={8}
+				disableRichText
 				className="min-h-32 resize-y rounded border border-line bg-paper px-3 py-2 font-mono text-2xs leading-relaxed text-ink focus:border-accent focus:outline-none"
 			/>
 			<DialogFooter

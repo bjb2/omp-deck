@@ -21,6 +21,9 @@
    via `[data-theme="…"] .hljs-…` blocks. */
 @import "highlight.js/styles/atom-one-light.css";
 
+/* Per-component opt-ins — Tiptap surface + Gholam suggestion decoration. */
+@import "./components/RichEditor.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

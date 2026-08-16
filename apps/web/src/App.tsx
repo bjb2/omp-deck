@@ -5,6 +5,8 @@ import { useNotificationBridge } from "./lib/notifications";
 import { NotificationToast } from "./components/NotificationToast";
 import { NotificationPermissionBanner } from "./components/NotificationPermissionBanner";
 import { AuthGate } from "./components/auth/AuthGate";
+import { FocusModeProvider } from "./components/focus/FocusModeProvider";
+import { FocusStrip } from "./components/focus/FocusStrip";
 
 export function App() {
 	return (
@@ -34,11 +36,12 @@ function AuthedApp() {
 	}, [bootstrap]);
 
 	return (
-		<>
+		<FocusModeProvider>
+			<FocusStrip />
 			<NotificationPermissionBanner />
 			<AppRouter />
 			<NotificationToast />
-		</>
+		</FocusModeProvider>
 	);
 }
 

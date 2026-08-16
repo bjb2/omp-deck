@@ -26,6 +26,7 @@ import { authApi } from "@/lib/auth-api";
 import { type AuthError, type AuthStatus, deckAuthApi } from "@/lib/deck-auth-api";
 import { attachApi, type AttachHistoryEntry } from "@/lib/attach-api";
 import { SessionAttachQR } from "@/components/SessionAttachQR";
+import { RichEditor } from "@/components/RichEditor";
 import { CopyButton } from "@/lib/CopyButton";
 import { playNotificationTone } from "@/lib/audio";
 import { useNotificationPermission } from "@/lib/notifications";
@@ -1360,10 +1361,10 @@ function PreludeCard() {
 					<div className="text-sm text-ink-3">Loading...</div>
 				) : (
 					<>
-						<textarea
+						<RichEditor
 							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							spellCheck={false}
+							onChange={(v) => setDraft(v)}
+							disableRichText
 							className="block min-h-[320px] w-full resize-y rounded-md border border-line bg-paper-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink"
 						/>
 						<div className="flex flex-wrap items-center gap-2">
@@ -1481,10 +1482,10 @@ function StartCommandCard() {
 						</label>
 						<label className="block space-y-1">
 							<span className="meta">body</span>
-							<textarea
+							<RichEditor
 								value={body}
-								onChange={(e) => setBody(e.target.value)}
-								spellCheck={false}
+								onChange={(v) => setBody(v)}
+								disableRichText
 								className="block min-h-[280px] w-full resize-y rounded-md border border-line bg-paper-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink"
 							/>
 						</label>

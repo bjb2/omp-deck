@@ -4,6 +4,7 @@ import { Maximize2, Trash2, X } from "lucide-react";
 import type { Routine, RoutineActionKind, RoutineRun } from "@omp-deck/protocol";
 
 import { routinesApi } from "@/lib/routines-api";
+import { RichEditor } from "@/components/RichEditor";
 import { formatDurationMs } from "@/lib/utils";
 
 import { RoutineBuilder } from "./RoutineBuilder";
@@ -325,13 +326,24 @@ function V0Editor({
 							</button>
 						))}
 					</div>
-					<textarea
-						value={form.actionBody}
-						onChange={(e) => update("actionBody", e.target.value)}
-						rows={5}
-						placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""}
-						className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed"
-					/>
+					{form.actionKind === "prompt" ? (
+						<RichEditor
+							value={form.actionBody}
+							onChange={(v) => update("actionBody", v)}
+							rows={5}
+							placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""}
+							disableRichText={false}
+							className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed"
+						/>
+					) : (
+						<textarea
+							value={form.actionBody}
+							onChange={(e) => update("actionBody", e.target.value)}
+							rows={5}
+							placeholder={KINDS.find((k) => k.value === form.actionKind)?.placeholder ?? ""}
+							className="field mt-1.5 w-full resize-y px-2 py-1.5 font-mono text-xs leading-relaxed"
+						/>
+					)}
 					{form.actionKind === "prompt" ? (
 						ompOnPath === false ? (
 							<div className="mt-1.5 rounded border border-warn/40 bg-warn/5 px-2 py-1.5 font-mono text-2xs text-warn">

@@ -6,6 +6,7 @@ import { broadcastBus } from "./broadcast-bus.ts";
 import { logger } from "./log.ts";
 import { getBuildInfo, getUptimeSecs } from "./build-info.ts";
 import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
+import { createAutoTasks, parseTaskCues } from "./auto-kanban.ts";
 const log = logger("ws");
 
 /** Per-connection state. */
@@ -324,6 +325,12 @@ export class WsHub {
 			return;
 		}
 		handle.prompt(frame.text, opts).catch(sendError);
+	// Auto-kanban: deterministic splitter kicks in after the SDK session
+	// receives the prompt. Fire-and-forget — failure must never block
+	// the prompt send path.
+	if (!frame.text.startsWith("/")) {
+		fireAutoKanban(handle.cwd, frame.text);
+	}
 	}
 
 	private async handleAbort(ws: ServerWebSocket<ConnectionData>, sessionId: string): Promise<void> {
@@ -331,15 +338,14 @@ export class WsHub {
 		if (!handle) {
 			send(ws, { type: "error", sessionId, error: "session not active" });
 			return;
-		}
+	}
 		this.bridge.bumpActivity(sessionId);
 		try {
 			await handle.abort();
 		} catch (err) {
 			send(ws, { type: "error", sessionId, error: `abort failed: ${String(err)}` });
-		}
 	}
-
+	}
 	private handleClearQueue(ws: ServerWebSocket<ConnectionData>, sessionId: string): void {
 		const handle = this.bridge.getSession(sessionId);
 		if (!handle) {
@@ -489,4 +495,19 @@ export class WsHub {
 
 function send(ws: ServerWebSocket<ConnectionData>, frame: ServerFrame): void {
 	ws.send(JSON.stringify(frame));
+}
+
+/** Project label for a session cwd. Mirrors `routes.ts: deriveLabel`. */
+function deriveProjectName(cwd: string): string {
+	if (!cwd) return "default";
+	const parts = cwd.split(/[\\/]/).filter(Boolean);
+	return parts[parts.length - 1] ?? "default";
+}
+
+/** Fire-and-forget auto-kanban — never awaited, never throws. */
+function fireAutoKanban(cwd: string, text: string): void {
+	const projectName = deriveProjectName(cwd);
+	void createAutoTasks(parseTaskCues(text), cwd, projectName).catch((err) =>
+		log.warn(`auto-kanban ws hook failed`, err),
+	);
 }

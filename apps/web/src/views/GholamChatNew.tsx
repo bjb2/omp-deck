@@ -12,6 +12,7 @@ import { ArrowLeft, Send } from "lucide-react";
 
 import { Layout } from "@/components/Layout";
 import { ModelPicker } from "@/components/gholam/ModelPicker";
+import { RichEditor } from "@/components/RichEditor";
 import { gholamChatApi } from "@/lib/gholam-chat-api";
 import { useStore } from "@/lib/store";
 
@@ -108,11 +109,12 @@ export function GholamChatNew() {
 
 					<label className="flex flex-col gap-1 font-mono text-2xs text-ink-3">
 						Prompt
-						<textarea
+						<RichEditor
 							value={prompt}
-							onChange={(ev) => setPrompt(ev.target.value)}
+							onChange={(v) => setPrompt(v)}
 							rows={10}
 							placeholder="What should the twin do?"
+							disableRichText
 							className="rounded border border-line bg-paper-2 px-2 py-1 font-mono text-2xs text-ink"
 						/>
 					</label>

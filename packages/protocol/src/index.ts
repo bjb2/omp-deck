@@ -21,6 +21,19 @@ export type { ValidationError, ValidationResult } from "./validate";
 export { GHOLAM_PERMISSIONS } from "./permissions";
 export type { GholamPermission } from "./permissions";
 
+// Local imports for the gholam text-suggestion frames so the ServerFrame /
+// ClientFrame unions below can reference them by short name. The re-export
+// below does NOT make the names available to in-file type references.
+import type {
+	GholamTextSuggestion,
+	GholamTextSuggestFrame,
+	GholamTextApplyFrame,
+} from "./gholam-suggest";
+
+// Re-export the gholam text-suggestion frames. Append-only addition to the
+// ServerFrame / ClientFrame unions below; see `./gholam-suggest.ts`.
+export type { GholamTextSuggestion, GholamTextSuggestFrame, GholamTextApplyFrame } from "./gholam-suggest";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REST shapes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -948,7 +961,7 @@ export type GholamPermissionKey = string;
 
 /** Client → Server. Augmented with `gholam_command` for the gholam
  *  permissions gate. Same union pattern as `ServerFrame`. */
-export type ClientFrame = _ClientFrameBase | GholamCommandFrame;
+export type ClientFrame = _ClientFrameBase | GholamCommandFrame | GholamTextApplyFrame;
 
 /** Server → Client. Internal name; consumers should use the augmented
  *  `ServerFrame` re-export below, which adds `reload_available` and
@@ -1274,7 +1287,11 @@ export interface DeployStateFrame {
  * the bundle hash changes; client soft-reloads) and `deploy_state`
  * (live build/deploy phase for the DeployStatusBadge).
  */
-export type ServerFrame = _ServerFrameBase | ReloadAvailableFrame | DeployStateFrame;
+export type ServerFrame =
+	| _ServerFrameBase
+	| ReloadAvailableFrame
+	| DeployStateFrame
+	| GholamTextSuggestFrame;
 
 /** Severity for a deck notification. Drives the audio tone + visual styling. */
 export type NotificationLevel = "info" | "warn" | "error" | "critical";
