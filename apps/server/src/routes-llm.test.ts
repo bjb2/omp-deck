@@ -58,7 +58,9 @@ afterEach(() => {
 	__setCompleteStreamForTests(null);
 	__setDeckLLMRegistryForTests(null);
 	closeDb();
-	fs.rmSync(dir, { recursive: true, force: true });
+	// Windows holds file locks on the SQLite WAL/SHM for a beat after closeDb();
+	// EBUSY here is harmless — the temp dir gets cleaned by the OS eventually.
+	try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
 	sessionCookie = null;
 });
 
@@ -108,6 +110,14 @@ async function* chunkStream(chunks: LlmChunk[]): AsyncIterable<LlmChunk> {
 }
 
 describe("POST /api/llm/test", () => {
+	// Reset seams at the END of each test in this describe — protects against
+	// another test file's afterEach clobbering the seams between our
+	// beforeEach and our assertions under bun's parallel runner.
+	afterEach(() => {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+	});
+
 	test("returns 403 without a session", async () => {
 		const res = await buildLLMRouter().request(unauthReq({ model: "minimax/MiniMax-M3" }));
 		expect(res.status).toBe(403);
@@ -131,17 +141,29 @@ describe("POST /api/llm/test", () => {
 
 	test("returns 404 for unknown model ref", async () => {
 		__setDeckLLMRegistryForTests(makeRegistry());
+		__setCompleteStreamForTests(null);
+		try {
 		const res = await buildLLMRouter().request(adminReq({ model: "minimax/no-such-model" }));
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as { ok: boolean; error: string };
 		expect(body.ok).toBe(false);
 		expect(body.error).toContain("unknown model");
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("returns 400 when model lacks provider/id separator", async () => {
 		__setDeckLLMRegistryForTests(makeRegistry());
+		__setCompleteStreamForTests(null);
+		try {
 		const res = await buildLLMRouter().request(adminReq({ model: "just-a-model" }));
 		expect(res.status).toBe(400);
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("resolves body.model as 'provider/id' and streams back ok:true", async () => {
@@ -157,6 +179,7 @@ describe("POST /api/llm/test", () => {
 			yield { type: "text", delta: "ok" };
 			yield { type: "done" };
 		});
+		try {
 		const res = await buildLLMRouter().request(adminReq({ model: "minimax/MiniMax-M3" }));
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
@@ -171,6 +194,10 @@ describe("POST /api/llm/test", () => {
 		expect(body.provider).toBe("MiniMax");
 		expect(body.note).toBe("streamed");
 		expect(typeof body.latencyMs).toBe("number");
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("prefers explicit provider+id over body.model", async () => {
@@ -187,10 +214,15 @@ describe("POST /api/llm/test", () => {
 		__setCompleteStreamForTests(() =>
 			chunkStream([{ type: "text", delta: "hi" }, { type: "done" }]),
 		);
+		try {
 		const res = await buildLLMRouter().request(
 			adminReq({ model: "wrong/format", provider: "minimax", id: "MiniMax-M3" }),
 		);
 		expect(res.status).toBe(200);
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("returns 502 when the upstream yields an error chunk", async () => {
@@ -198,21 +230,31 @@ describe("POST /api/llm/test", () => {
 		__setCompleteStreamForTests(() =>
 			chunkStream([{ type: "error", error: "rate limited" }, { type: "done" }]),
 		);
+		try {
 		const res = await buildLLMRouter().request(adminReq({ model: "minimax/MiniMax-M3" }));
 		expect(res.status).toBe(502);
 		const body = (await res.json()) as { ok: boolean; error: string };
 		expect(body.ok).toBe(false);
 		expect(body.error).toBe("rate limited");
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("returns 502 when the stream ends with no chunks at all", async () => {
 		__setDeckLLMRegistryForTests(makeRegistry());
 		__setCompleteStreamForTests(() => chunkStream([]));
+		try {
 		const res = await buildLLMRouter().request(adminReq({ model: "minimax/MiniMax-M3" }));
 		expect(res.status).toBe(502);
 		const body = (await res.json()) as { ok: boolean; error: string };
 		expect(body.ok).toBe(false);
 		expect(body.error).toBe("no response");
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("falls back to the baked default when no model is supplied", async () => {
@@ -220,25 +262,36 @@ describe("POST /api/llm/test", () => {
 		__setCompleteStreamForTests(() =>
 			chunkStream([{ type: "text", delta: "y" }, { type: "done" }]),
 		);
+		try {
 		const res = await buildLLMRouter().request(adminReq({}));
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean; modelId: string };
 		expect(body.ok).toBe(true);
 		expect(body.modelId).toBe("minimax/MiniMax-M3");
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 
 	test("forwards AbortSignal to the upstream stream", async () => {
 		__setDeckLLMRegistryForTests(makeRegistry());
+		__setCompleteStreamForTests(null);
 		let receivedSignal: AbortSignal | undefined;
 		__setCompleteStreamForTests((opts) => {
 			receivedSignal = opts.signal;
 			return chunkStream([{ type: "text", delta: "ok" }, { type: "done" }]);
 		});
+		try {
 		const res = await buildLLMRouter().request(
 			adminReq({ model: "minimax/MiniMax-M3", timeoutMs: 1000 }),
 		);
 		expect(res.status).toBe(200);
 		expect(receivedSignal).toBeDefined();
 		expect(receivedSignal?.aborted).toBe(false);
+		} finally {
+		__setCompleteStreamForTests(null);
+		__setDeckLLMRegistryForTests(null);
+		}
 	});
 });

@@ -58,6 +58,12 @@ export const gholamChatApi = {
 	cancel(id: string): Promise<GholamChat> {
 		return request(`/gholam/chats/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 	},
+	patchModel(id: string, model: string): Promise<{ chat: GholamChat }> {
+		return request(`/gholam/chats/${encodeURIComponent(id)}`, {
+			method: "PATCH",
+			body: JSON.stringify({ model }),
+		});
+	},
 	restart(id: string, body: RestartGholamChatRequest): Promise<GholamChat> {
 		return request(`/gholam/chats/${encodeURIComponent(id)}/restart`, {
 			method: "POST",

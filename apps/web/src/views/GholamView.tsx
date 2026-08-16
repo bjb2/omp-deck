@@ -18,6 +18,7 @@ import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/Button";
 import { DeployStatusBadge } from "@/components/DeployStatusBadge";
 import { useStore } from "@/lib/store";
+import { GholamChats } from "@/views/GholamChats";
 
 interface GholamState {
 	running: boolean;
@@ -41,7 +42,7 @@ interface Priority {
 	addedAt?: string;
 }
 
-export function GholamView(): JSX.Element {
+function SidecarTab(): JSX.Element {
 	const [state, setState] = useState<GholamState | null>(null);
 	const [priorities, setPriorities] = useState<Priority[]>([]);
 	const [draftLabel, setDraftLabel] = useState("");
@@ -275,6 +276,44 @@ export function GholamView(): JSX.Element {
 								</ul>
 							)}
 						</section>
+					</div>
+				</div>
+			}
+		/>
+	);
+}
+
+export function GholamView(): JSX.Element {
+	const [tab, setTab] = useState<"chats" | "sidecar">("chats");
+
+	return (
+		<Layout
+			sidebar={null}
+			inspector={null}
+			main={
+				<div className="flex h-full min-h-0 flex-col">
+					<div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-paper px-3">
+						<div className="meta">Gholam</div>
+						<div className="flex-1" />
+						<Button
+							size="sm"
+							variant={tab === "chats" ? "primary" : "ghost"}
+							onClick={() => setTab("chats")}
+							data-tooltip-key="gholam.tab.chats"
+						>
+							Chats
+						</Button>
+						<Button
+							size="sm"
+							variant={tab === "sidecar" ? "primary" : "ghost"}
+							onClick={() => setTab("sidecar")}
+							data-tooltip-key="gholam.tab.sidecar"
+						>
+							Sidecar
+						</Button>
+					</div>
+					<div className="min-h-0 flex-1 overflow-hidden">
+						{tab === "chats" ? <GholamChats /> : <SidecarTab />}
 					</div>
 				</div>
 			}

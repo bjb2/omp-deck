@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef } from "react";
-import { createBrowserRouter, Outlet, RouterProvider, useLocation, useNavigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useNavigate } from "react-router-dom";
 import { ChatView } from "./views/ChatView";
 import { TasksView } from "./views/TasksView";
 import { RoutinesView } from "./views/RoutinesView";
@@ -104,7 +104,7 @@ const router = createBrowserRouter([
 			{ path: "/routines", element: <RoutinesView /> },
 			{ path: "/workflows", element: <WorkflowsView /> },
 			{ path: "/gholam", element: <GholamView /> },
-			{ path: "/gholam/chats", element: <GholamChats /> },
+			{ path: "/gholam/chats", element: <Navigate to="/gholam?tab=chats" replace /> },
 			{ path: "/gholam/chat/new", element: <GholamChatNew /> },
 			{ path: "/gholam/chat/:chatId", element: <GholamChatView /> },
 			{ path: "/routines/:id/runs/:runId", element: <RunDetailView /> },

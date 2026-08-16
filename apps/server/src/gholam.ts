@@ -12,6 +12,12 @@
  *
  * The user controls the priority queue — only items in `priorities` are
  * eligible for Gholam to act on. Without priorities Gholam idles.
+ *
+ * NOTE: the Gholam *chat* runtime (`./gholam-chat.ts`) does NOT depend on this
+ * sidecar. It dispatches tool calls through the in-process deck MCP runtime
+ * (`./gholam-mcp-runtime.ts`) and stays online even when the sidecar is
+ * stopped. Only the legacy `/api/gholam/*` priority surface — start/stop,
+ * heartbeat, priorities, `gholam.edit()` — requires a running sidecar.
  */
 import { existsSync, promises as fs } from "node:fs";
 import * as os from "node:os";
