@@ -34,6 +34,7 @@ import { lifecycle } from "./lifecycle.ts";
 import { workflowz } from "./workflowz.ts";
 import { titleService } from "./session-title.ts";
 import { sessionLifecycle } from "./session-lifecycle.ts";
+import { sessionMetaAI } from "./session-meta-ai.ts";
 
 const log = logger("routes:harness");
 
@@ -275,6 +276,19 @@ export function buildHarnessRouter(bridge: AgentBridge): Hono {
 		try {
 			const title = await titleService.regenerate(bridge, id);
 			return c.json({ ok: true, title });
+		} catch (err) {
+			return c.json({ error: String(err) }, 500);
+		}
+	});
+
+	// AI-generated metadata (title, tags, urgency, importance, status, summary).
+	// Heuristic-fallback inside the service — never throws. Body: { force?: boolean }.
+	app.post("/sessions/:id/regenerate-meta", async (c) => {
+		const id = c.req.param("id");
+		const raw = (await c.req.json().catch(() => ({}))) as { force?: boolean };
+		try {
+			const meta = await sessionMetaAI.summarize({ bridge, sessionId: id, force: raw.force === true });
+			return c.json({ ok: true, meta });
 		} catch (err) {
 			return c.json({ error: String(err) }, 500);
 		}

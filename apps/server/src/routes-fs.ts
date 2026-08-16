@@ -2,11 +2,22 @@ import { Hono } from "hono";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 
-import type { FilePathMatch, ListFilePathsResponse } from "@omp-deck/protocol";
+import type {
+	FilePathMatch,
+	ListFilePathsResponse,
+	ListFsDialogResponse,
+} from "@omp-deck/protocol";
 
 import { logger } from "./log.ts";
 
 const log = logger("fs-complete");
+
+// Portable case-insensitive, numeric-aware alphabetical sort for the
+// directory picker. Default `localeCompare` is platform/locale-dependent
+// (Windows sorts "Gamma" after "alpha" — different from POSIX), so pin
+// the behaviour explicitly.
+const DIALOG_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 
 /**
  * `GET /api/fs/complete?cwd=<absolute>&q=<>&limit=<>` enumerates file paths
@@ -54,6 +65,35 @@ export function buildFsRouter(): Hono {
 			matches: matches.map((e) => ({ path: e.path, name: e.name, isDir: e.isDir })),
 			cached: fromCache,
 		};
+		return c.json(body);
+	});
+
+	app.get("/fs/dialog", (c) => {
+		const cwd = c.req.query("cwd")?.trim();
+		const q = c.req.query("q")?.toLowerCase() ?? "";
+		if (!cwd || !path.isAbsolute(cwd)) {
+			return c.json({ error: "cwd query param must be an absolute path" }, 400);
+		}
+		if (!isCwdAllowed(cwd)) {
+			return c.json({ error: "cwd is not under an allowed root" }, 403);
+		}
+
+		let dirents;
+		try {
+			dirents = readdirSync(cwd, { withFileTypes: true });
+		} catch (err) {
+			log.warn(`dialog readdir failed for ${cwd}: ${String(err)}`);
+			return c.json({ error: "cwd is not readable" }, 400);
+		}
+
+		const entries = dirents
+			.filter((d) => d.isDirectory() && d.name !== "." && d.name !== "..")
+			.filter((d) => (q ? d.name.toLowerCase().includes(q) : true))
+			.map((d) => ({ name: d.name, path: path.join(cwd, d.name), isDir: true as const }))
+			.sort((a, b) => DIALOG_COLLATOR.compare(a.name, b.name))
+			.slice(0, 200);
+
+		const body: ListFsDialogResponse = { entries };
 		return c.json(body);
 	});
 
@@ -235,7 +275,7 @@ function score(entries: InventoryEntry[], rawQ: string, limit: number): Inventor
 
 // ─── Sandboxing ────────────────────────────────────────────────────────────
 
-function isCwdAllowed(cwd: string): boolean {
+export function isCwdAllowed(cwd: string): boolean {
 	// Only allow cwds under the user's home directory. The deck is loopback-
 	// only, but a buggy client shouldn't be able to probe `C:\Windows\System32`.
 	const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
