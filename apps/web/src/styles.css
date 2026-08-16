@@ -1,24 +1,32 @@
-/* Font system — IBM Plex Sans for body, IBM Plex Mono for chrome / data / code. */
+/* ─── omp-deck design system ──────────────────────────────────────────────────
+   VOLT is the flagship look: a tactical ops console for driving a coding
+   agent. Carbon-black surfaces, hairline structure, a single acid-lime
+   accent with an ice-cyan gradient partner, sharp 2–4px geometry, and a
+   mono-first type system (JetBrains Mono for every piece of chrome; IBM
+   Plex Sans is reserved for long-form markdown prose via `.markdown`).
+
+   Token contract (space-separated R G B triplets so Tailwind's
+   `<alpha-value>` substitution composes — `bg-warn/15` etc.). Themes swap
+   at runtime via `<html data-theme="...">`. */
+
+/* Type — JetBrains Mono for chrome / data / code, IBM Plex Sans for prose. */
 @import "@fontsource/ibm-plex-sans/400.css";
 @import "@fontsource/ibm-plex-sans/500.css";
 @import "@fontsource/ibm-plex-sans/600.css";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
-@import "@fontsource/ibm-plex-mono/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
 
-/* Light-theme code highlighting baseline. Slate theme overrides token colors
-   below via `[data-theme="slate"] .hljs-…` blocks. */
+/* Light-theme code highlighting baseline; dark themes remap tokens below
+   via `[data-theme="…"] .hljs-…` blocks. */
 @import "highlight.js/styles/atom-one-light.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Themes ────────────────────────────────────────────────────────────────
-   Tokens are space-separated R G B triplets so Tailwind's `<alpha-value>`
-   substitution composes correctly (`bg-warn/15`, `bg-accent-soft/50`). Read
-   them through `rgb(var(--token))` in raw CSS, or via Tailwind utilities
-   anywhere else. Switching themes is `<html data-theme="slate">`. */
+/* ─── Themes ──────────────────────────────────────────────────────────────── */
+
 :root,
 [data-theme="paper"] {
 	color-scheme: light;
@@ -40,7 +48,7 @@
 	--danger: 153 27 27;
 	--thinking: 107 33 168;
 	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 [data-theme="slate"] {
@@ -63,13 +71,12 @@
 	--danger: 248 113 113;
 	--thinking: 192 132 252;
 	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* Horizon — ported from vincitamore/opus-extensions/omp-themes/horizon.json.
    Dark surface, pink accent (#e95678), mint success, peach warn, cyan
-   syntax bias. Same token contract as paper/slate so all components light
-   up without per-theme branches. */
+   syntax bias. Same token contract as every other theme. */
 [data-theme="horizon"] {
 	color-scheme: dark;
 	--paper: 28 30 38;          /* horizon bg #1c1e26 */
@@ -83,21 +90,18 @@
 	--line: 46 48 62;           /* border #2e303e */
 	--line-strong: 64 68 88;
 	--accent: 233 86 120;       /* pink #e95678 */
-	--accent-soft: 56 28 38;    /* dark pink tint for soft fills */
+	--accent-soft: 56 28 38;
 	--accent-2: 233 86 120;
 	--success: 41 211 152;      /* mint #29d398 */
 	--warn: 250 183 149;        /* peach #fab795 */
-	--danger: 233 86 120;       /* pink — horizon uses the accent for errors */
+	--danger: 233 86 120;
 	--thinking: 184 119 219;    /* purple #b877db */
 	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* Aurora — the flagship dark look. Deep near-black canvas, a true two-stop
-   violet→cyan accent gradient (most components read --accent alone; a few
-   gradient surfaces — buttons, focus rings, the nav rail's active tab — blend
-   --accent with --accent-2 for the signature look), glass panels via the
-   .glass utility below. Same token contract as every other theme. */
+/* Aurora — deep near-black canvas, violet→cyan gradient accents, glass
+   panels via the .glass utility below. */
 [data-theme="aurora"] {
 	color-scheme: dark;
 	--paper: 10 11 16;          /* #0a0b10 */
@@ -118,11 +122,37 @@
 	--danger: 251 113 133;
 	--thinking: 217 70 239;
 	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* highlight.js — keep atom-one-light as the default surface; remap the token
-   colors we care about for the slate theme so code reads cleanly on dark. */
+/* VOLT — the flagship: tactical ops console. Near-black carbon surfaces
+   with a cold cast, hairline graphite lines, acid-lime primary accent and
+   ice-cyan gradient partner, amber numbers, mint strings, rose variables.
+   Same token contract as every other theme so all components light up. */
+[data-theme="volt"] {
+	color-scheme: dark;
+	--paper: 8 9 11;            /* carbon #08090b */
+	--paper-2: 12 13 16;        /* raised #0c0d10 */
+	--paper-3: 19 20 24;        /* inset #131418 */
+	--paper-code: 6 7 8;        /* deep #060708 */
+	--ink: 228 232 238;         /* #e4e8ee */
+	--ink-2: 172 178 188;
+	--ink-3: 116 122 134;
+	--ink-4: 70 75 84;
+	--line: 25 27 31;           /* hairline graphite */
+	--line-strong: 42 45 52;
+	--accent: 182 244 48;       /* acid lime #b6f430 */
+	--accent-2: 85 214 255;     /* ice cyan #55d6ff */
+	--accent-soft: 26 36 10;    /* dark lime tint #1a240a */
+	--success: 62 214 142;      /* mint #3ed68e */
+	--warn: 252 200 47;         /* amber #fcc82f */
+	--danger: 255 92 108;       /* signal red #ff5c6c */
+	--thinking: 188 140 255;    /* ultraviolet #bc8cff */
+	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ─── highlight.js ────────────────────────────────────────────────────────── */
 .hljs {
 	background: transparent !important;
 	color: rgb(var(--ink)) !important;
@@ -258,6 +288,51 @@
 	color: rgb(251 113 133);
 }
 
+/* VOLT syntax — lime keywords, mint strings, amber numerics, cyan
+   definitions, rose variables. High-voltage on carbon. */
+[data-theme="volt"] .hljs-comment,
+[data-theme="volt"] .hljs-quote {
+	color: rgb(var(--ink-4));
+}
+[data-theme="volt"] .hljs-keyword,
+[data-theme="volt"] .hljs-selector-tag,
+[data-theme="volt"] .hljs-literal,
+[data-theme="volt"] .hljs-section,
+[data-theme="volt"] .hljs-link {
+	color: rgb(var(--accent));
+}
+[data-theme="volt"] .hljs-string,
+[data-theme="volt"] .hljs-attr,
+[data-theme="volt"] .hljs-symbol,
+[data-theme="volt"] .hljs-bullet,
+[data-theme="volt"] .hljs-addition {
+	color: rgb(var(--success));
+}
+[data-theme="volt"] .hljs-number,
+[data-theme="volt"] .hljs-meta,
+[data-theme="volt"] .hljs-built_in,
+[data-theme="volt"] .hljs-builtin-name,
+[data-theme="volt"] .hljs-type,
+[data-theme="volt"] .hljs-params {
+	color: rgb(var(--warn));
+}
+[data-theme="volt"] .hljs-title,
+[data-theme="volt"] .hljs-function .hljs-title,
+[data-theme="volt"] .hljs-class .hljs-title {
+	color: rgb(var(--accent-2));
+}
+[data-theme="volt"] .hljs-variable,
+[data-theme="volt"] .hljs-template-variable,
+[data-theme="volt"] .hljs-name,
+[data-theme="volt"] .hljs-selector-id,
+[data-theme="volt"] .hljs-selector-class,
+[data-theme="volt"] .hljs-tag {
+	color: rgb(var(--danger));
+}
+[data-theme="volt"] .hljs-deletion {
+	color: rgb(var(--danger));
+}
+
 @layer base {
 	html,
 	body,
@@ -271,77 +346,169 @@
 	body {
 		background-color: rgb(var(--paper));
 		color: rgb(var(--ink));
-		font-family: var(--font-sans);
-		font-feature-settings: "ss01", "cv11";
+		/* Mono-first: the whole chrome is terminal-grade. `.markdown` is the
+		   one surface that opts back into the sans face for long prose. */
+		font-family: var(--font-mono);
+		font-size: 13px;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
 	}
 
-	/* Scrollbars — match the active paper, hairline thumb. */
+	/* Scrollbars — thin, square, graphite. */
 	::-webkit-scrollbar {
-		width: 10px;
-		height: 10px;
+		width: 8px;
+		height: 8px;
 	}
 	::-webkit-scrollbar-thumb {
-		background-color: rgb(var(--ink) / 0.18);
-		border-radius: 999px;
-		border: 2px solid rgb(var(--paper));
+		background-color: rgb(var(--ink-4) / 0.28);
+		border-radius: 0;
 	}
 	::-webkit-scrollbar-thumb:hover {
-		background-color: rgb(var(--ink) / 0.32);
+		background-color: rgb(var(--ink-3) / 0.5);
 	}
 	::-webkit-scrollbar-track {
 		background-color: transparent;
 	}
+	::-webkit-scrollbar-corner {
+		background-color: transparent;
+	}
 
-	/* Selection */
+	/* Selection — voltage. */
 	::selection {
-		background-color: rgb(var(--accent) / 0.16);
+		background-color: rgb(var(--accent) / 0.22);
+	}
+
+	/* Native controls follow the token contract. */
+	select,
+	input,
+	textarea {
+		font-family: var(--font-mono);
+	}
+	select option {
+		background-color: rgb(var(--paper-2));
+		color: rgb(var(--ink));
 	}
 }
 
 @layer components {
-	/* Field — light input that doesn't shout. */
+	/* Field — sharp hairline input; focus gets the volt edge. */
 	.field {
 		@apply bg-paper-2 border border-line text-ink placeholder:text-ink-4
-			focus:border-ink/40 focus:outline-none rounded-md;
+			focus:border-accent/60 focus:outline-none focus:shadow-[0_0_0_1px_rgb(var(--accent)/0.25),0_0_16px_-6px_rgb(var(--accent)/0.45)]
+			rounded-sm transition-shadow;
 	}
 
 	/* Pure utility row used everywhere instead of a card. */
 	.row {
-		@apply border-b border-line py-2;
+		@apply border-b border-line py-1.5;
 	}
 
-	/* Meta label — small caps, monospace, dim. Used for "you" / "omp" / section names. */
+	/* Meta label — small caps, monospace, dim. */
 	.meta {
 		@apply font-mono text-2xs uppercase tracking-meta text-ink-3;
 	}
 
-	/* Chip — tiny status pill. Restrained, no shadow. */
+	/* Chip — tiny status pill. */
 	.chip {
-		@apply inline-flex items-center gap-1 rounded font-mono text-2xs uppercase
+		@apply inline-flex items-center gap-1 rounded-sm font-mono text-2xs uppercase
 			tracking-meta px-1.5 py-0.5;
 	}
 
-	/* Buttons — flat, single-accent. */
+	/* Keyboard affordance — a real key cap. */
+	.kbd {
+		@apply inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-sm
+			border border-line bg-paper-3 px-1 font-mono text-2xs text-ink-3
+			shadow-[inset_0_-1px_0_rgb(var(--ink)/0.08)];
+	}
+
+	/* Buttons — flat, sharp, current-carrying. */
 	.btn {
-		@apply inline-flex items-center justify-center gap-1.5 rounded-md font-medium
-			transition-colors focus:outline-none focus-visible:ring-1
-			focus-visible:ring-ink/30 disabled:cursor-not-allowed disabled:opacity-50;
+		@apply inline-flex items-center justify-center gap-1.5 rounded-sm font-medium
+			transition-all focus:outline-none focus-visible:ring-1
+			focus-visible:ring-accent/70 focus-visible:ring-offset-1 focus-visible:ring-offset-paper
+			disabled:cursor-not-allowed disabled:opacity-40;
 	}
 	.btn-primary {
 		@apply btn bg-ink text-paper-2 hover:bg-ink-2;
 	}
+	/* Accent button — lime with dark text, subtle electric hover. */
+	.btn-accent {
+		@apply btn bg-accent text-paper-code font-semibold
+			hover:shadow-[0_0_0_1px_rgb(var(--accent)/0.55),0_0_20px_-4px_rgb(var(--accent)/0.55)];
+	}
 	.btn-ghost {
-		@apply btn text-ink-2 hover:bg-paper-3;
+		@apply btn text-ink-2 hover:bg-paper-3 hover:text-ink;
 	}
 	.btn-danger {
 		@apply btn bg-danger text-paper-2 hover:bg-danger/85;
 	}
 
-	/* Markdown — sans body, mono inline code, calm blockquotes. */
+	/* Panel — the primary card: raised surface, hairline border, tactical
+	   corner ticks (pseudo-element L-brackets, top-left + bottom-right). */
+	.panel {
+		@apply relative rounded-sm border border-line bg-paper-2;
+	}
+	.panel::before,
+	.panel::after {
+		content: "";
+		position: absolute;
+		width: 7px;
+		height: 7px;
+		pointer-events: none;
+	}
+	.panel::before {
+		top: -1px;
+		left: -1px;
+		border-top: 1px solid rgb(var(--accent) / 0.55);
+		border-left: 1px solid rgb(var(--accent) / 0.55);
+	}
+	.panel::after {
+		bottom: -1px;
+		right: -1px;
+		border-bottom: 1px solid rgb(var(--accent) / 0.55);
+		border-right: 1px solid rgb(var(--accent) / 0.55);
+	}
+
+	/* Panel header strip — mono caps title + actions, dense. */
+	.panel-head {
+		@apply flex h-8 items-center gap-2 border-b border-line px-3;
+	}
+
+	/* Toolbar — view-level action row. */
+	.toolbar {
+		@apply flex h-9 shrink-0 items-center gap-2 border-b border-line bg-paper px-3;
+	}
+
+	/* Segmented control — joined buttons, hairline dividers. */
+	.seg {
+		@apply inline-flex overflow-hidden rounded-sm border border-line bg-paper-2;
+	}
+	.seg > button {
+		@apply px-2.5 py-1 font-mono text-2xs uppercase tracking-meta text-ink-3
+			transition-colors hover:text-ink;
+	}
+	.seg > button + button {
+		@apply border-l border-line;
+	}
+	.seg > button[aria-pressed="true"] {
+		@apply bg-accent-soft/60 text-accent;
+	}
+
+	/* Stat — dense metric cell. */
+	.stat {
+		@apply flex flex-col gap-0.5 rounded-sm border border-line bg-paper-2 px-2.5 py-1.5;
+	}
+
+	/* Statusbar — the bottom telemetry strip. */
+	.statusbar {
+		@apply flex h-6 shrink-0 items-center gap-x-3 border-t border-line bg-paper-2
+			px-3 font-mono text-2xs uppercase tracking-meta text-ink-3;
+	}
+
+	/* Markdown — the one sans surface; mono inline code, calm quotes. */
 	.markdown {
-		@apply text-ink leading-relaxed text-[15px];
+		@apply text-ink leading-relaxed text-[14.5px];
+		font-family: var(--font-sans);
 	}
 	.markdown p {
 		@apply my-2;
@@ -360,10 +527,7 @@
 		@apply list-decimal;
 	}
 	.markdown a {
-		@apply text-accent underline underline-offset-2;
-	}
-	.markdown a:hover {
-		@apply text-accent/80;
+		@apply text-accent underline underline-offset-2 decoration-accent/40 hover:decoration-accent;
 	}
 	.markdown h1,
 	.markdown h2,
@@ -380,7 +544,7 @@
 		@apply text-sm;
 	}
 	.markdown code:not(pre code) {
-		@apply font-mono text-[0.86em] bg-paper-3 text-ink px-1 py-0.5 rounded;
+		@apply font-mono text-[0.86em] bg-paper-3 text-accent px-1 py-px rounded-sm;
 	}
 	.markdown pre {
 		@apply font-mono text-xs bg-paper-code border-y border-line
@@ -400,11 +564,11 @@
 		@apply bg-paper-3 font-medium;
 	}
 	.markdown img {
-		@apply my-2 max-w-full h-auto rounded-md border border-line bg-paper-2;
+		@apply my-2 max-w-full h-auto rounded-sm border border-line bg-paper-2;
 	}
 }
 
-/* Streaming caret — subtle, monospace block to feel terminal-adjacent. */
+/* Streaming caret — terminal block in the accent channel. */
 .cursor-blink::after {
 	content: "▍";
 	display: inline-block;
@@ -421,9 +585,8 @@
 
 /* ─── React Flow / canvas overrides ─────────────────────────────────────────
    The V2 routine canvas builder uses `@xyflow/react`. Its CSS exposes the
-   token names below; we re-bind them to deck paper/ink/line/accent so the
-   canvas inherits whichever theme is active. Scoped under .routine-canvas so
-   nothing else on the page is affected. */
+   token names below; re-bound to deck paper/ink/line/accent so the canvas
+   inherits whichever theme is active. Scoped under .routine-canvas. */
 .routine-canvas .react-flow {
 	--xy-background-color-default: rgb(var(--paper));
 	--xy-background-pattern-color-default: rgb(var(--ink-4) / 0.35);
@@ -446,26 +609,22 @@
 	--xy-node-border-default: 1px solid rgb(var(--line));
 	--xy-attribution-background-color-default: transparent;
 }
-/* React Flow's default Controls icons are SVG <path>s with currentColor;
-   the wrapper's text-ink class on the parent doesn't propagate, so set it
-   explicitly on the buttons. */
 .routine-canvas .react-flow__controls-button svg {
 	fill: rgb(var(--ink-2));
 }
 .routine-canvas .react-flow__controls-button:hover svg {
 	fill: rgb(var(--ink));
 }
-/* ─── Aurora-flavored utilities ──────────────────────────────────────────────
-   These are theme-contract-safe: on paper/slate/horizon, --accent-2 equals
-   --accent, so a "gradient" degrades to a flat fill with zero visual change.
-   Only Aurora, where the two tokens genuinely differ, shows the effect.
-   Motion utilities are global — they use the shared spring easing so any
-   view can opt in, not just the cockpit. */
+
+/* ─── Signature utilities ─────────────────────────────────────────────────────
+   Theme-contract-safe: on single-accent themes --accent-2 equals --accent,
+   so gradients degrade to flat fills. Only VOLT and Aurora show the two-stop
+   effect. Motion utilities respect the reduced-motion query below. */
 
 .glass {
-	background: rgb(var(--paper-2) / 0.72);
-	backdrop-filter: blur(16px) saturate(1.4);
-	-webkit-backdrop-filter: blur(16px) saturate(1.4);
+	background: rgb(var(--paper-2) / 0.78);
+	backdrop-filter: blur(14px) saturate(1.35);
+	-webkit-backdrop-filter: blur(14px) saturate(1.35);
 	border: 1px solid rgb(var(--line) / 0.7);
 }
 
@@ -491,9 +650,14 @@
 	box-shadow: 0 0 16px -6px rgb(var(--accent) / 0.5);
 }
 
-/* Spring-flavored transition — snappier settle than ease-out, used for
-   panel/card entrances and interactive presses. Respects reduced motion via
-   the global media query below. */
+/* Blueprint dot-grid canvas — the app's engineering-paper backdrop. */
+.bg-grid {
+	background-image: radial-gradient(rgb(var(--ink-4) / 0.14) 1px, transparent 1px);
+	background-size: 22px 22px;
+	background-position: -1px -1px;
+}
+
+/* Spring-flavored transition — snappier settle than ease-out. */
 .transition-spring {
 	transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
 	transition-duration: 320ms;
@@ -546,19 +710,19 @@
 	flex-direction: column;
 	align-items: flex-end;
 	gap: 0.5rem;
-	font-family: var(--font-sans, system-ui);
+	font-family: var(--font-mono, ui-monospace);
 }
 .gholam-pill {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.4rem;
 	padding: 0.35rem 0.7rem;
-	border-radius: 9999px;
+	border-radius: 3px;
 	border: 1px solid rgb(var(--line) / 0.6);
 	background: rgb(var(--paper) / 0.9);
 	backdrop-filter: blur(8px);
 	color: rgb(var(--ink-2));
-	font-size: 0.75rem;
+	font-size: 0.72rem;
 	font-weight: 500;
 	letter-spacing: 0.02em;
 	cursor: pointer;
@@ -594,7 +758,7 @@
 	flex-direction: column;
 	background: rgb(var(--paper) / 0.95);
 	border: 1px solid rgb(var(--line));
-	border-radius: 12px;
+	border-radius: 4px;
 	overflow: hidden;
 	box-shadow: 0 24px 48px -16px rgb(var(--ink) / 0.35);
 	backdrop-filter: blur(12px);
@@ -663,7 +827,7 @@
 	padding: 0.35rem 0.6rem;
 	background: rgb(var(--paper-2));
 	border: 1px solid rgb(var(--line));
-	border-radius: 6px;
+	border-radius: 3px;
 	color: rgb(var(--ink));
 	font-size: 0.78rem;
 }
@@ -671,10 +835,11 @@
 	padding: 0.35rem 0.7rem;
 	background: rgb(var(--accent));
 	color: rgb(var(--paper));
-	border-radius: 6px;
+	border-radius: 3px;
 	font-size: 0.78rem;
 	font-weight: 600;
 }
+
 /* workflowz result cards */
 .workflowz-grid {
 	display: grid;
@@ -683,7 +848,7 @@
 }
 .workflowz-card {
 	border: 1px solid rgb(var(--line));
-	border-radius: 8px;
+	border-radius: 3px;
 	padding: 0.75rem;
 	background: rgb(var(--paper-2));
 }
@@ -721,9 +886,8 @@
 }
 
 /* ─── Shell terminal pane ──────────────────────────────────────────────────
-   The shell body is an ANSI-preserving pre. The deck already wires a
-   monospace font (`--font-mono`) per theme, so we just inherit it and
-   keep the wrapping behaviour consistent with the workflowz pre above. */
+   The shell body is an ANSI-preserving pre. Inherits --font-mono per theme
+   and keeps wrapping consistent with the workflowz pre above. */
 .shell-body {
 	font-family: var(--font-mono, ui-monospace);
 	font-size: 0.72rem;
