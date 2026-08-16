@@ -1,14 +1,15 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-
 import type {
 	DeployState,
 	ExtUiDialogResponse,
 	GholamChat,
 	GholamChatMessageWire,
 	GholamChatState,
+	ListMcpToolsResponse,
 	McpHealthResponse,
 	McpHealthStatus,
+	McpToolSpec,
 	Prompt,
 	PromptRecommendation,
 	ListSessionsResponse,
@@ -197,6 +198,14 @@ interface StoreState {
 	 * mark itself stale after 60s without a frame.
 	 */
 	mcpHealth: { response: McpHealthResponse | null; lastReceivedAtMs: number | null };
+	/**
+	 * Per-server cache of `GET /api/mcp/:name/tools`. Populated by
+	 * `fetchMcpTools` (used by the chrome popover + /integrations), evicted
+	 * on `mcp_tools_changed` frames so a toggle re-fetches fresh state.
+	 */
+	mcpToolsByName: Record<string, { tools: McpToolSpec[]; disabledTools: string[]; fetchedAt: number }>;
+	/** Bumped on every `mcp_tools_changed` server frame so popovers re-fetch. */
+	mcpToolsChangeCounter: number;
 
 	/**
 	 * Cached prompt library for the active user. Mirrors the server-side
@@ -297,6 +306,18 @@ interface StoreState {
 	setModelSelection(sel: { provider: string; id: string }): void;
 	/** Drop the cached mcp_health when no frame has arrived for 60s. */
 	markMcpHealthStale(): void;
+
+	/** Cache `GET /api/mcp/:name/tools` so the popover opens without a
+	 *  round-trip when reopened within the 30s window. */
+	cacheMcpTools(name: string, payload: ListMcpToolsResponse): void;
+
+	/** Optimistic enable/disable write so the chrome chip + studio row
+	 *  reflect the action immediately, without waiting for the next
+	 *  `mcp_health` frame. */
+	setMcpServerEnabled(name: string, enabled: boolean): void;
+
+	/** Drop a server from the cached health snapshot. */
+	removeMcpServer(name: string): void;
 	/**
 	 * Pin a single active "focus" session — drives the Overview hero timer and
 	 * the Focus button on task cards. `focusStartedAtMs` is stamped on set so
@@ -328,6 +349,8 @@ export const useStore = create<StoreState>()(
 		deployState: null,
 		storefrontPulse: { byId: {}, counter: 0 },
 		mcpHealth: { response: null, lastReceivedAtMs: null },
+	mcpToolsByName: {},
+	mcpToolsChangeCounter: 0,
 		promptsLibrary: [],
 		promptsRecommendations: [],
 		// Persistent Gholam chat state (§1).
@@ -725,6 +748,68 @@ export const useStore = create<StoreState>()(
 		set({ mcpHealth: { response: null, lastReceivedAtMs: null } });
 	},
 
+	/**
+	 * Idempotent cache write used by `fetchMcpTools`. Stores the tools
+	 * list + the server's disabledTools[] so the popover can render
+	 * without re-fetching when reopened within the 30s window.
+	 */
+	cacheMcpTools(name: string, payload: ListMcpToolsResponse): void {
+		set((s) => ({
+			mcpToolsByName: {
+				...s.mcpToolsByName,
+				[name]: {
+					tools: payload.tools,
+					disabledTools: payload.disabledTools,
+					fetchedAt: Date.now(),
+				},
+			},
+		}));
+	},
+
+	/**
+	 * Optimistic enable/disable write so the chrome chip + studio row
+	 * reflect the action immediately, without waiting for the next
+	 * `mcp_health` frame. The reducer that handles `mcp_tools_changed`
+	 * still drops the cached entry so the next popover open re-fetches.
+	 */
+	setMcpServerEnabled(name: string, enabled: boolean): void {
+		set((s) => {
+			const response = s.mcpHealth.response;
+			if (!response) return {};
+			let touched = false;
+			const status = response.status.map((row) => {
+				if (row.name !== name) return row;
+				touched = true;
+				return {
+					...row,
+					state: enabled ? ("healthy" as const) : ("disabled" as const),
+					lastLatencyMs: enabled ? row.lastLatencyMs : null,
+				};
+			});
+			if (!touched) return {};
+			return { mcpHealth: { ...s.mcpHealth, response: { ...response, status } } };
+		});
+	},
+
+	removeMcpServer(name: string): void {
+		set((s) => {
+			const response = s.mcpHealth.response;
+			const tools = { ...s.mcpToolsByName };
+			delete tools[name];
+			if (!response) return { mcpToolsByName: tools };
+			return {
+				mcpHealth: {
+					...s.mcpHealth,
+					response: {
+						...response,
+						status: response.status.filter((row) => row.name !== name),
+					},
+				},
+				mcpToolsByName: tools,
+			};
+		});
+	},
+
 	setFocusSession(id) {
 		// Stamping `Date.now()` at the moment of set keeps the Overview timer
 		// stable across re-renders; the timer reads `Date.now() - focusStartedAtMs`
@@ -1046,6 +1131,20 @@ case "mcp_health":
 		return { mcpHealth: { response: next, lastReceivedAtMs: Date.now() } };
 		});
 			return;
+
+	case "mcp_tools_changed":
+		// Drop the cached tools list for the affected server — the popover
+		// will re-fetch on next open. Keeping the entry in place would
+		// serve a stale disabledTools[] for up to 30s after the toggle.
+		set((s) => {
+			const next = { ...s.mcpToolsByName };
+			delete next[frame.name];
+			return {
+				mcpToolsByName: next,
+				mcpToolsChangeCounter: s.mcpToolsChangeCounter + 1,
+			};
+		});
+		return;
 }
 }
 
@@ -1088,4 +1187,53 @@ function readModelSelection(): { provider: string; id: string } | undefined {
 		/* ignore corrupt entry */
 	}
 	return undefined;
+}
+
+import { storefrontApi } from "./storefront-api";
+
+// ─── MCP toast + tools helpers ──────────────────────────────────────────────
+/**
+ * Single entry point for MCP-related toasts. Shared between the chrome
+ * popover, the storefront strip, and `/integrations` so every action
+ * surface lands the same `notifications[]` shape on the store.
+ */
+export function pushMcpToast(
+	level: NotificationLevel,
+	title: string,
+	body?: string,
+): void {
+	useStore.setState((s) => ({
+		notifications: [
+			...s.notifications,
+			{
+				id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				level,
+				title,
+				body,
+				timestamp: new Date().toISOString(),
+				receivedAtMs: Date.now(),
+				deliveredOs: false,
+				dismissed: false,
+			},
+		],
+	}));
+}
+
+/**
+ * Fetch + cache the per-server tool list. Returns the cached entry if it
+ * landed within the last 30s and no `mcp_tools_changed` frame has evicted
+ * it (the reducer drops the entry on every change). 30s is a ponytail
+ * choice — the chip popover opens / closes often while the user iterates
+ * on tool filters; longer caching risks serving state the server has
+ * already moved past.
+ */
+export function fetchMcpTools(name: string): Promise<ListMcpToolsResponse | null> {
+	const cached = useStore.getState().mcpToolsByName[name];
+	if (cached && Date.now() - cached.fetchedAt < 30_000) {
+		return Promise.resolve({ name, tools: cached.tools, disabledTools: cached.disabledTools });
+	}
+	return storefrontApi.mcpTools(name).then((res) => {
+		if (res) useStore.getState().cacheMcpTools(name, res);
+		return res;
+	});
 }

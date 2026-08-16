@@ -228,7 +228,12 @@ export class McpHealthProbe {
 		}
 	}
 
-	private async runOnce(): Promise<void> {
+	/**
+	 * Trigger a single probe cycle on demand. Used by the chrome "Refresh"
+	 * button (`POST /api/mcp/probe-now`); the probe itself broadcasts the
+	 * resulting snapshot.
+	 */
+	async runOnce(): Promise<void> {
 		const configPath = this.resolveConfigPath();
 		if (!configPath) return;
 		let cfg: McpConfigFile;

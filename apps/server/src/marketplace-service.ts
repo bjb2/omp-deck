@@ -2,6 +2,7 @@ import type {
 	InstalledPluginInfo,
 	ListMarketplaceResponse,
 	MarketplaceCatalogEntry,
+	MarketplaceUpdate,
 	MarketplaceSource,
 } from "@omp-deck/protocol";
 import {
@@ -262,6 +263,53 @@ export class MarketplaceService {
 		await mgr.uninstallPlugin(opts.id, opts.scope);
 	}
 
+	/**
+	 * "Upgrade" a plugin in the absence of a first-party SDK upgrade path
+	 * (`MarketplaceManager` exposes `installPlugin` but no `upgradePlugin`).
+	 * Parse the `name@marketplace` id, then re-install with `force: true`
+	 * so the SDK refreshes the cache + registry entry. Mirrors the install
+	 * error contract: every thrown error bubbles to the route layer for
+	 * `translateInstallError` to classify.
+	 */
+	async upgradePlugin(opts: { id: string; scope?: "user" | "project" }): Promise<InstalledPluginInfo> {
+		const parsed = parsePluginId(opts.id);
+		if (!parsed) {
+			throw new Error(`Invalid plugin ID format: "${opts.id}". Expected "name@marketplace".`);
+		}
+		return this.install({
+			name: parsed.name,
+			marketplace: parsed.marketplace,
+			...(opts.scope ? { scope: opts.scope } : {}),
+			force: true,
+		});
+	}
+
+	/**
+	 * Diff installed plugins against the live catalog and surface a
+	 * `MarketplaceUpdate` row whenever the catalog version is newer than
+	 * the registry's recorded version. Empty list = no updates available.
+	 */
+	async listUpdates(): Promise<MarketplaceUpdate[]> {
+		try {
+			const { catalog, installed } = await this.listCatalog();
+			const installedById = new Map(installed.map((i) => [i.id, i]));
+			const out: MarketplaceUpdate[] = [];
+			for (const entry of catalog) {
+				const i = installedById.get(entry.id);
+				if (!i?.version) continue;
+				const latest = entry.version;
+				if (!latest) continue;
+				if (compareSemverLike(latest, i.version) > 0) {
+					out.push({ id: entry.id, installed: i.version, available: latest });
+				}
+			}
+			return out;
+		} catch (err) {
+			log.warn("listUpdates failed", err);
+			return [];
+		}
+	}
+
 	async addMarketplace(source: string): Promise<MarketplaceSource> {
 		// Mirror install()/dryRun(): per-call re-check the SSL CA bundle before
 		// any SDK git clone. The boot-time applySslFix() can drift if a child
@@ -381,6 +429,31 @@ async function readPluginManifest(sourcePath: string): Promise<PluginManifest> {
 	const result: PluginManifest = { entrypoints };
 	if (version) result.version = version;
 	return result;
+}
+
+/**
+ * Lightweight dot/plus/dash version compare shared by `listUpdates` and any
+ * future drift scan. Looser than the catalog's stricter parser — handles
+ * `1.2.3-rc.1`, `1.2.3+build`, and bare `1.2` without throwing. Returns
+ * positive when `a > b`, negative when `a < b`, 0 when equal.
+ */
+function compareSemverLike(a: string, b: string): number {
+	const pa = a.split(/[.\-+]/).filter(Boolean);
+	const pb = b.split(/[.\-+]/).filter(Boolean);
+	const len = Math.max(pa.length, pb.length);
+	for (let i = 0; i < len; i++) {
+		const na = pa[i] ?? "0";
+		const nb = pb[i] ?? "0";
+		const da = Number.parseInt(na, 10);
+		const db = Number.parseInt(nb, 10);
+		if (Number.isFinite(da) && Number.isFinite(db)) {
+			if (da !== db) return da - db;
+			continue;
+		}
+		const c = na.localeCompare(nb);
+		if (c !== 0) return c;
+	}
+	return 0;
 }
 
 function deriveCloneUrl(source: unknown): string {
