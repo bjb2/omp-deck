@@ -9,7 +9,7 @@
  *
  * Persistence:
  *   - Prelude override → `<dataDir>/prelude.md` (deck-managed file). Absence
- *     means "fall back to DEFAULT_PRELUDE shipped in this module".
+ *     means "fall back to the built-in prelude shipped in this module".
  *   - /start command   → `~/.omp/agent/commands/start.md` (the same file the
  *     omp SDK re-reads every time `/start` fires; we don't shadow it).
  *   - Maintenance-gate → managed env file via `env-store.ts`. We just project
@@ -24,6 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { getDataDir, readManagedEnvFile } from "./env-store.ts";
+import { getAgentApiHint } from "./deck-urls.ts";
 
 /**
  * System-prompt block prepended to every omp session created or resumed via
@@ -34,14 +35,20 @@ import { getDataDir, readManagedEnvFile } from "./env-store.ts";
  * Imperatives belong in the orchestrator (`/start.md`), NOT here — see
  * `kb://system/imperatives-belong-in-orchestrator-not-prelude.md`. This file
  * is reference material; the orchestrator drives the turn.
+ *
+ * Built on demand rather than at import time: the prelude embeds the deck's API
+ * base and — once authentication is on — the bearer header a session needs to
+ * call it. Both are settled during boot, after this module is imported, so a
+ * module-level constant would bake in the pre-boot values and hand every agent
+ * session an API hint that 401s.
  */
-export const DEFAULT_PRELUDE = `# omp-deck context
+function buildDefaultPrelude(): string {
+	return `# omp-deck context
 
-You are running inside an omp-deck session. omp-deck is a local web UI for
-the omp coding agent that also exposes a kanban, cron scheduler, and inbox
-over HTTP on the loopback interface.
+You are running inside an omp-deck session. omp-deck is a web UI for the omp
+coding agent that also exposes a kanban, cron scheduler, and inbox over HTTP.
 
-Local API base: http://127.0.0.1:8787/api  (use the \`bash\` tool with \`curl\`).
+Deck API base: ${getAgentApiHint()}
 
 ## Knowledge base
 A local llm-wiki at \`~/kb/\` is the deck's long-form memory; the cockpit's \`/kb\` view consumes it. The canonical orientation reads (\`working-voice\`, \`deck-orientation\`, \`projects-hub\`, \`org-system-hub\` — all under \`kb://system/\`) are wired into the \`/start\` slash command and fire on session boot. Re-read any of them directly when you need to re-anchor mid-session.
@@ -89,6 +96,16 @@ Each mutation surface above has a preferred path. Use these when the user asks t
 
 Skills that compose with these: \`skill://create-skill\`, \`skill://handoff\`, \`skill://grill-me\`, \`skill://prototype\`, \`skill://diagnose\`, \`skill://zoom-out\`. Use \`read skill://<name>\` to load any skill's full instructions.
 `;
+}
+
+/**
+ * The built-in prelude used when the operator has not written an override.
+ *
+ * A function, not a constant — see {@link buildDefaultPrelude}.
+ */
+export function getDefaultPrelude(): string {
+	return buildDefaultPrelude();
+}
 
 // ─── prelude ───────────────────────────────────────────────────────────────
 
@@ -106,7 +123,7 @@ export function readPreludeOverride(): string | null {
 	}
 }
 
-/** `null` clears the override; the next read returns DEFAULT_PRELUDE. */
+/** `null` clears the override; the next read returns the built-in prelude. */
 export function writePreludeOverride(value: string | null): void {
 	const p = getPreludeFilePath();
 	if (value === null) {
@@ -123,7 +140,7 @@ export function writePreludeOverride(value: string | null): void {
 
 /** Effective text the bridge prepends to every session's system prompt. */
 export function getEffectivePrelude(): string {
-	return readPreludeOverride() ?? DEFAULT_PRELUDE;
+	return readPreludeOverride() ?? getDefaultPrelude();
 }
 
 // ─── /start command ────────────────────────────────────────────────────────

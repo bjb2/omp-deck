@@ -8,8 +8,14 @@
  *   dispatches per-provider internally AND persists the resulting credential
  *   via `.set()` — we do NOT call `upsertAuthCredentialForProvider` ourselves.
  * - SDK spawns its own short-lived loopback listener on hard-coded ports
- *   (Anthropic 54545, Codex 1455). The deck never receives the provider
- *   callback. No `/callback` route here.
+ *   (Anthropic 54545, Codex 1455), and the provider's app registration pins the
+ *   same URI, so it cannot be repointed at a domain. The deck therefore never
+ *   receives the provider callback directly.
+ * - `GET /callback` exists anyway, but it is a *landing* route, not a redirect
+ *   target: on a self-hosted deck the provider's redirect dies on the browser's
+ *   own localhost, and this route lets the user finish by editing that dead
+ *   URL's host to point at the deck. It feeds the URL to the same manual-code
+ *   path the modal uses.
  * - One in-flight flow per provider — port collisions on the SDK's
  *   `Bun.serve({ port, reusePort: false })` would otherwise throw.
  * - 5-minute hard timeout lives in the SDK (`DEFAULT_TIMEOUT` in
@@ -32,6 +38,7 @@ import type {
 } from "@omp-deck/protocol";
 
 import { broadcastBus } from "./broadcast-bus.ts";
+import { getPublicUrl } from "./deck-urls.ts";
 import { getDeckAuthStorage, getDeckModelRegistry } from "./auth-singleton.ts";
 import { logger } from "./log.ts";
 
@@ -156,6 +163,48 @@ function humanizeError(provider: string, raw: unknown): string {
 	return msg;
 }
 
+/**
+ * Minimal self-contained result page for the OAuth landing route.
+ *
+ * Inlined rather than served from the SPA: this page is opened in a stray tab
+ * that may have no session state and no reason to boot the whole app, and it
+ * has exactly one job — tell the user whether it worked.
+ */
+function callbackPage(title: string, detail: string, ok: boolean): string {
+	const escape = (s: string) =>
+		s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+	return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escape(title)} — omp-deck</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #fbfbfa; color: #1b1c1a;
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #16181a; color: #e6e8e6; } }
+  main { max-width: 26rem; text-align: center; }
+  h1 { font-size: 1.05rem; margin: 0 0 .5rem; font-weight: 600; }
+  p { margin: 0; color: #5d635f; }
+  @media (prefers-color-scheme: dark) { p { color: #9aa3a0; } }
+  .mark { font-size: 1.6rem; line-height: 1; margin-bottom: .75rem; }
+</style>
+</head>
+<body>
+  <main>
+    <div class="mark">${ok ? "✓" : "✕"}</div>
+    <h1>${escape(title)}</h1>
+    <p>${escape(detail)}</p>
+  </main>
+</body>
+</html>`;
+}
+
 export function buildAuthOAuthRouter(): Hono {
 	const app = new Hono();
 
@@ -171,7 +220,12 @@ export function buildAuthOAuthRouter(): Hono {
 				...deriveAuthState(data[String(p.id)]),
 			}));
 		const body: ListProvidersResponse = { providers };
-		return c.json(body);
+		// `publicUrl` lets the client tell a self-hosted deck from a laptop one.
+		// The difference matters here and nowhere else: on a remote deck the
+		// provider's redirect to `localhost` lands on the user's own machine and
+		// dies, so the UI has to lead with the recovery path instead of burying
+		// it behind a disclosure triangle.
+		return c.json({ ...body, publicUrl: getPublicUrl() ?? null });
 	});
 
 	app.post("/:provider/start", async (c) => {
@@ -319,6 +373,76 @@ export function buildAuthOAuthRouter(): Hono {
 		} catch (err) {
 			return c.json({ error: humanizeError(provider, err) }, 500);
 		}
+	});
+
+	/**
+	 * Public landing point for a provider redirect.
+	 *
+	 * Anthropic and Codex pin their redirect URI to `http://localhost:<port>/callback`
+	 * inside the SDK, and the provider's app registration pins it too — neither
+	 * can be repointed at a domain. On a self-hosted deck that redirect lands on
+	 * the *browser's* machine, where nothing is listening, so the user sees a
+	 * dead page.
+	 *
+	 * That dead page still has the authorization code in its address bar. This
+	 * route lets the user finish the flow by editing the host of that URL to
+	 * point at the deck — `https://deck.example.com/oauth/callback?code=…&state=…`
+	 * — turning a dead end into one edit. It hands the whole URL to the SDK's
+	 * manual-code path, which parses the code and verifies `state` itself, so
+	 * this route never has to reason about CSRF.
+	 *
+	 * Reachable as `/oauth/callback` (aliased in the server's dispatcher) and as
+	 * `/api/auth/oauth/callback`. It sits behind the deck's auth gate: completing
+	 * a provider sign-in is a privileged act.
+	 */
+	app.get("/callback", (c) => {
+		const code = c.req.query("code");
+		const error = c.req.query("error_description") ?? c.req.query("error");
+
+		if (error) return c.html(callbackPage("Sign-in failed", error, false), 400);
+		if (!code) {
+			return c.html(
+				callbackPage(
+					"Nothing to complete",
+					"This URL carries no authorization code. Open it exactly as your browser left it, including the ?code=… part.",
+					false,
+				),
+				400,
+			);
+		}
+
+		const live = [...flows.values()].filter((f) => f.status !== "done" && f.status !== "errored");
+		if (live.length === 0) {
+			return c.html(
+				callbackPage(
+					"No sign-in is waiting",
+					"The flow already finished, was cancelled, or timed out. Start it again from Settings → Providers.",
+					false,
+				),
+				409,
+			);
+		}
+		if (live.length > 1) {
+			return c.html(
+				callbackPage(
+					"More than one sign-in is in progress",
+					"Cancel the ones you don't want in Settings → Providers, then reload this URL.",
+					false,
+				),
+				409,
+			);
+		}
+
+		// Hand over the full URL: parseCallbackInput extracts code and state, and
+		// the SDK rejects a state mismatch on our behalf.
+		live[0]!.manualCode.resolve(c.req.url);
+		return c.html(
+			callbackPage(
+				"Signed in",
+				`Finishing ${live[0]!.provider} sign-in — you can close this tab and return to the deck.`,
+				true,
+			),
+		);
 	});
 
 	app.post("/:provider/cancel", async (c) => {

@@ -1,20 +1,48 @@
-import { BookOpen, Clock, Inbox, KanbanSquare, MessagesSquare, Plug, Settings, Sparkles, Store } from "lucide-react";
+import {
+	BookOpen,
+	Bot as GholamIcon,
+	Clock,
+	Compass,
+	GitMerge,
+	FolderGit2,
+	LayoutDashboard,
+	LayoutGrid,
+	KanbanSquare,
+	Library,
+	MessagesSquare,
+	Plug,
+	SlidersHorizontal,
+	Terminal,
+	Settings,
+	ShoppingBag,
+	Sparkles,
+} from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
+// Remote-workstation nav. Every routed surface gets an entry here so nothing
+// is reachable only by typing a URL — see docs audit in the pages-audit PR.
 const ITEMS: ReadonlyArray<{
 	to: string;
 	label: string;
 	icon: typeof MessagesSquare;
 }> = [
-	{ to: "/", label: "Chat", icon: MessagesSquare },
+	{ to: "/", label: "Overview", icon: LayoutDashboard },
+	{ to: "/chat", label: "Chat", icon: MessagesSquare },
+	{ to: "/shell", label: "Shell", icon: Terminal },
+	{ to: "/explorer", label: "Explorer", icon: FolderGit2 },
+	{ to: "/agent-config", label: "Agent Config", icon: SlidersHorizontal },
 	{ to: "/tasks", label: "Tasks", icon: KanbanSquare },
 	{ to: "/routines", label: "Routines", icon: Clock },
-	{ to: "/inbox", label: "Inbox", icon: Inbox },
-	{ to: "/marketplace", label: "Marketplace", icon: Store },
+	{ to: "/workflows", label: "Workflows", icon: GitMerge },
 	{ to: "/skills", label: "Skills", icon: Sparkles },
-	{ to: "/kb", label: "Knowledge", icon: BookOpen },
+	{ to: "/storefront", label: "Storefront", icon: ShoppingBag },
+	{ to: "/gholam", label: "Gholam", icon: GholamIcon },
+	{ to: "/prompts/library", label: "Prompts", icon: BookOpen },
+	{ to: "/prompts/discover", label: "Discover", icon: Compass },
+	{ to: "/kb", label: "Knowledge Base", icon: Library },
 	{ to: "/integrations", label: "Integrations", icon: Plug },
+	{ to: "/studio", label: "Studio", icon: LayoutGrid },
 ];
 
 /**
@@ -23,7 +51,18 @@ const ITEMS: ReadonlyArray<{
  */
 export function NavRail() {
 	return (
-		<nav className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-paper py-2">
+		<nav className="flex h-full min-h-0 w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-paper py-2">
+			<NavLink
+				to="/"
+				title="Version 244 — Overview"
+				aria-label="Version 244 home"
+				className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3 hover:text-ink"
+			>
+				<span className="font-mono text-[10px] font-semibold leading-none tracking-tight">
+					v244
+				</span>
+			</NavLink>
+			<div className="h-px w-7 bg-line" aria-hidden="true" />
 			{ITEMS.map((item) => (
 				<NavLink
 					key={item.to}
@@ -33,7 +72,7 @@ export function NavRail() {
 					aria-label={item.label}
 					className={({ isActive }) =>
 						cn(
-							"relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+							"relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors",
 							isActive
 								? "text-accent bg-accent-soft/40"
 								: "text-ink-3 hover:bg-paper-3 hover:text-ink",
@@ -60,7 +99,7 @@ export function NavRail() {
 				aria-label="Settings"
 				className={({ isActive }) =>
 					cn(
-						"relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+						"relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors",
 						isActive
 							? "text-accent bg-accent-soft/40"
 							: "text-ink-3 hover:bg-paper-3 hover:text-ink",

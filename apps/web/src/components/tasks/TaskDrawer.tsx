@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import type { Task, TaskState } from "@omp-deck/protocol";
+import { RichEditor } from "@/components/RichEditor";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -107,15 +108,14 @@ export function TaskDrawer({ task, states, onClose, onSave, onDelete, onArchive,
 			</div>
 
 			<div className="flex-1 overflow-y-auto">
-				<textarea
+				<RichEditor
 					value={body}
-					onChange={(e) => {
-						setBody(e.target.value);
+					onChange={(v) => {
+						setBody(v);
 						setDirty(true);
 					}}
-					onBlur={maybeSave}
 					placeholder="Notes, acceptance criteria, links…"
-					className="h-full w-full resize-none bg-transparent px-4 py-3 text-sm text-ink placeholder:text-ink-4 focus:outline-none"
+					className="h-full w-full bg-transparent px-4 py-3 text-sm text-ink placeholder:text-ink-4 focus:outline-none"
 				/>
 			</div>
 

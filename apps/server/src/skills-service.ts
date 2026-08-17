@@ -15,8 +15,10 @@
  * next to the other server-level wiring.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import { skillCapability, type Skill as SdkSkill } from "@oh-my-pi/pi-coding-agent/capability/skill";
@@ -134,6 +136,97 @@ export class SkillsService {
 		const files = await walkSkillFiles(skillDir);
 
 		return { ...summary, body, files };
+	}
+
+	/**
+	 * Toggle the `hide:` frontmatter flag on a SKILL.md. This is the only
+	 * "enabled" signal the SDK's capability loader honors (see toSummary,
+	 * `enabled: !(item.frontmatter?.hide === true)`). YAML round-trip is
+	 * used to preserve every other key the user authored.
+	 *
+	 * Refuses to mutate skills owned by a marketplace plugin — those files
+	 * belong to the plugin cache and would be clobbered on the next refresh.
+	 */
+	async setEnabled(id: string, enabled: boolean, cwd?: string): Promise<SkillSummary | undefined> {
+		const resolved = await this.resolveOwnedSkill(id, cwd, "setEnabled");
+		if (!resolved) return undefined;
+		const { skillPath } = resolved;
+
+		const raw = await readFile(skillPath, "utf8");
+		const { fmText, body, hasFm } = splitFrontmatter(raw);
+		const fmDoc = hasFm && fmText.trim() ? (parseYaml(fmText) as Record<string, unknown> | null) ?? {} : {};
+		if (enabled) delete fmDoc.hide;
+		else fmDoc.hide = true;
+		const fmSerialized = stringifyYaml(fmDoc).trimEnd();
+		const next = hasFm
+			? `---\n${fmSerialized}\n---\n${body}`
+			: `---\n${fmSerialized}\n---\n${body}`;
+		await atomicWrite(skillPath, next);
+		log.info(`skills setEnabled: ${path.basename(path.dirname(skillPath))} → ${enabled}`);
+
+		// Refetch so the response reflects the freshly toggled state.
+		const list = await this.listSkills(cwd);
+		return list.skills.find((s) => s.skillPath === skillPath);
+	}
+
+	/**
+	 * Delete a skill directory. Refuses to remove skills owned by a
+	 * marketplace plugin (the plugin cache owns those files; deleting
+	 * breaks the plugin until refresh and confuses the user).
+	 */
+	async remove(id: string, cwd?: string): Promise<{ name: string; path: string } | undefined> {
+		const resolved = await this.resolveOwnedSkill(id, cwd, "remove");
+		if (!resolved) return undefined;
+		const { skillPath } = resolved;
+		const skillDir = path.dirname(skillPath);
+		await rm(skillDir, { recursive: true, force: false });
+		log.info(`skills remove: ${skillDir}`);
+		return { name: path.basename(skillDir), path: skillDir };
+	}
+
+	/**
+	 * Re-write SKILL.md from a new source. Source may be raw markdown or an
+	 * http(s) URL; the same fetch + scaffold rules as install apply. Refuses
+	 * to mutate skills owned by a marketplace plugin.
+	 */
+	async update(
+		id: string,
+		body: { source?: string; cwd?: string },
+	): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+		const resolved = await this.resolveOwnedSkill(id, body.cwd, "update");
+		if (!resolved) return { ok: false, error: "skill not found" };
+		const { skillPath } = resolved;
+		if (!body.source || !body.source.trim()) {
+			return { ok: false, error: "source is required to update an existing skill" };
+		}
+		const content = await fetchSkillSource(body.source.trim());
+		await atomicWrite(skillPath, content);
+		log.info(`skills update: ${skillPath}`);
+		return { ok: true, path: skillPath };
+	}
+
+	/**
+	 * Resolve a server-issued skill id back to its disk path and verify it is
+	 * NOT owned by a marketplace plugin. Returns the discovered skill path
+	 * or `undefined` if the id is invalid, the skill is gone, or the skill
+	 * belongs to a plugin (in which case the caller should 4xx).
+	 */
+	private async resolveOwnedSkill(
+		id: string,
+		cwd: string | undefined,
+		_label: string,
+	): Promise<{ skillPath: string } | undefined> {
+		const skillPath = decodeIdToPath(id);
+		if (!skillPath) return undefined;
+
+		const list = await this.listSkills(cwd);
+		const summary = list.skills.find((s) => s.skillPath === skillPath);
+		if (!summary) return undefined;
+		if (summary.provider === "claude-plugins") {
+			log.warn(`skills: refused mutation — skill is owned by plugin "${summary.pluginName ?? summary.pluginId ?? "?"}"`);
+			return undefined;
+		}
+		return { skillPath };
 	}
 
 	/**
@@ -269,6 +362,49 @@ function stripFrontmatter(text: string): string {
 	if (text[cursor] === "\r") cursor += 1;
 	if (text[cursor] === "\n") cursor += 1;
 	return text.slice(cursor);
+}
+
+/**
+ * Split a SKILL.md file into its frontmatter block and body. Returns
+ * `hasFm=false` when the file has no frontmatter (in which case `fmText`
+ * is the whole file). Used by `setEnabled` so we can round-trip YAML
+ * without clobbering the body the user authored.
+ */
+function splitFrontmatter(
+	text: string,
+): { fmText: string; body: string; hasFm: boolean } {
+	if (!text.startsWith("---")) return { fmText: text, body: text, hasFm: false };
+	const end = text.indexOf("\n---", 3);
+	if (end < 0) return { fmText: text, body: text, hasFm: false };
+	const fmText = text.slice(3, end).replace(/^\n/, "");
+	let cursor = end + 4;
+	if (text[cursor] === "\r") cursor += 1;
+	if (text[cursor] === "\n") cursor += 1;
+	return { fmText, body: text.slice(cursor), hasFm: true };
+}
+
+/**
+ * Atomic write — same tmp+rename pattern as `routes-skills-install.ts`.
+ * The skill path is guaranteed to exist by `resolveOwnedSkill`, so we
+ * skip the `mkdir` step; only `writeFile` + `rename` are needed.
+ */
+async function atomicWrite(filePath: string, content: string): Promise<void> {
+	const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+	await writeFile(tmp, content, "utf8");
+	await rename(tmp, filePath);
+}
+
+/**
+ * Resolve a skill source string. http(s) URLs are fetched as the SKILL.md
+ * body; everything else is treated as raw markdown text. Mirrors
+ * `routes-skills-install.ts#fetchSource` without importing from a route
+ * module (cross-module layering would couple the service to a route).
+ */
+async function fetchSkillSource(source: string): Promise<string> {
+	if (!/^https?:\/\//i.test(source)) return source;
+	const res = await fetch(source);
+	if (!res.ok) throw new Error(`source download failed (HTTP ${res.status})`);
+	return await res.text();
 }
 
 // Cap depth and total entries so a misconfigured plugin (e.g. checked-in

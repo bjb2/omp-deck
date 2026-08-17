@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ContextUsage } from "@omp-deck/protocol";
 import { api } from "@/lib/api";
+import { RichEditor } from "@/components/RichEditor";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -111,11 +112,12 @@ export function ContextIndicator({ sessionId, usage }: Props) {
 							: `${formatTokens(usage.contextWindow)} window · usage refreshes after next turn`}
 					</div>
 					<label className="meta mb-1 block">Focus (optional)</label>
-					<textarea
+					<RichEditor
 						value={focus}
-						onChange={(e) => setFocus(e.target.value)}
+						onChange={(v) => setFocus(v)}
 						placeholder="e.g. keep details of the deck routes-fs.ts work"
 						rows={2}
+						disableRichText
 						className={cn(
 							"field w-full resize-none font-mono text-xs",
 							"placeholder:text-ink-4",

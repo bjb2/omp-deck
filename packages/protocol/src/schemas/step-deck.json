@@ -4,6 +4,7 @@
   "title": "RoutineStep — deck",
   "description": "First-party omp-deck action. Safer than generic HTTP for deck-owned mutations like creating inbox items or tasks.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

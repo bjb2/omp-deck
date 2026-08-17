@@ -4,6 +4,7 @@
   "title": "RoutineStep — run",
   "description": "Shell command. cmd /c on Windows, bash -lc on POSIX. Templated arg substitution applied to `command` and `cwd` before exec.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

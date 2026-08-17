@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Clock, ClipboardList, MessagesSquare, Plus } from "lucide-react";
+import { ArrowRight, ClipboardList, MessagesSquare, Plus } from "lucide-react";
 import type { SessionSummary } from "@omp-deck/protocol";
 
 import { selectActiveSession, useStore } from "@/lib/store";
-import { cn, shortPath } from "@/lib/utils";
+import { shortPath } from "@/lib/utils";
+import { NewSessionModal } from "@/components/sessions/NewSessionModal";
+import { SessionRow, urgencyRank } from "@/components/sessions/SessionRow";
+import type { SessionUi } from "@/lib/types";
 
 /**
  * Rendered as the chat main pane when there is no active session selected.
@@ -20,9 +23,14 @@ export function SessionPicker() {
 	const createSession = useStore((s) => s.createSession);
 	const selectSession = useStore((s) => s.selectSession);
 	const refreshSessions = useStore((s) => s.refreshSessions);
+	const regenerateSessionAiMeta = useStore((s) => s.regenerateSessionAiMeta);
+	const setSessionUrgency = useStore((s) => s.setSessionUrgency);
+	const setSessionImportance = useStore((s) => s.setSessionImportance);
+	const archiveSession = useStore((s) => s.archiveSession);
 
 	const [selectedCwd, setSelectedCwd] = useState<string>("");
 	const [busy, setBusy] = useState(false);
+	const [modalOpen, setModalOpen] = useState(false);
 	const cwdInUse = selectedCwd || defaultCwd;
 
 	const recent = useMemo(() => {
@@ -30,7 +38,12 @@ export function SessionPicker() {
 		// Persisted rows, freshest first, that aren't already loaded in memory.
 		const persisted = sessions
 			.filter((s) => !sessionsById[s.id])
-			.sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt))
+			.slice()
+			.sort((a, b) => {
+				const u = urgencyRank(b.urgency) - urgencyRank(a.urgency);
+				if (u !== 0) return u;
+				return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+			})
 			.slice(0, 6);
 		return { live, persisted };
 	}, [sessions, sessionsById]);
@@ -97,13 +110,20 @@ export function SessionPicker() {
 					</div>
 					<button
 						type="button"
-						onClick={() => void startFresh()}
+						onClick={() => setModalOpen(true)}
 						disabled={busy}
 						className="btn-primary mt-3 h-9 w-full text-sm"
 					>
 						<Plus className="h-4 w-4" />
 						New session
 					</button>
+					<NewSessionModal
+						open={modalOpen}
+						onClose={() => setModalOpen(false)}
+						onCreated={() => {
+							/* store sets activeId; nothing else to do */
+						}}
+					/>
 				</div>
 
 				{/* Live sessions in this server process — usually empty on a fresh load. */}
@@ -113,22 +133,20 @@ export function SessionPicker() {
 						<ul className="space-y-1">
 							{recent.live.map((s) => (
 								<li key={s.sessionId}>
-									<button
-										type="button"
+									<SessionRow
+										summary={liveSummaryFromUi(s)}
+										title={s.sessionName ?? undefined}
+										subtitle={shortPath(s.cwd, 32)}
+										live
+										planMode={s.planMode?.enabled === true}
+										updatedAt={s.meta?.aiGeneratedAt ?? undefined}
+										sessionId={s.sessionId}
 										onClick={() => selectSession(s.sessionId)}
-										className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-paper-3/60"
-									>
-										<span
-											className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-											aria-label="live"
-										/>
-										<span className="flex-1 truncate text-ink">
-											{s.sessionName || formatSessionId(s.sessionId)}
-										</span>
-										<span className="font-mono text-2xs text-ink-3">
-											{shortPath(s.cwd, 32)}
-										</span>
-									</button>
+										onArchive={(id) => void archiveSession(id)}
+										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+									/>
 								</li>
 							))}
 						</ul>
@@ -142,26 +160,15 @@ export function SessionPicker() {
 						<ul className="space-y-1">
 							{recent.persisted.map((s) => (
 								<li key={s.id}>
-									<button
-										type="button"
+									<SessionRow
+										summary={s}
+										subtitle={shortPath(s.cwd, 30)}
 										onClick={() => void resume(s)}
-										disabled={busy}
-										className={cn(
-											"group flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
-											"hover:bg-paper-3/60 disabled:opacity-60",
-										)}
-									>
-										<Clock className="h-3.5 w-3.5 shrink-0 text-ink-4" />
-										<span className="flex-1 truncate text-ink">
-											{s.title || formatSessionId(s.id)}
-										</span>
-										<span className="font-mono text-2xs text-ink-4">
-											{shortPath(s.cwd, 24)} · {s.messageCount}m
-										</span>
-										<span className="font-mono text-2xs text-ink-4">
-											{formatRelative(s.updatedAt || s.createdAt)}
-										</span>
-									</button>
+										onArchive={(id) => void archiveSession(id)}
+										onRegenerate={(id) => void regenerateSessionAiMeta(id, { force: true })}
+										onSetUrgency={(id, u) => void setSessionUrgency(id, u)}
+										onSetImportance={(id, i) => void setSessionImportance(id, i)}
+									/>
 								</li>
 							))}
 						</ul>
@@ -176,32 +183,31 @@ export function SessionPicker() {
 	);
 }
 
-function formatSessionId(id: string): string {
-	return id.length <= 12 ? id : `${id.slice(0, 6)}…${id.slice(-4)}`;
-}
-
-const REL: Array<[number, string]> = [
-	[60_000, "just now"],
-	[3_600_000, "m"],
-	[86_400_000, "h"],
-	[2_592_000_000, "d"],
-];
-
-function formatRelative(ts: string): string {
-	if (!ts) return "";
-	const d = new Date(ts);
-	if (Number.isNaN(d.getTime())) return ts;
-	const diff = Date.now() - d.getTime();
-	if (diff < 0) return d.toLocaleDateString();
-	const first = REL[0];
-	if (!first || diff < first[0]) return "just now";
-	for (let i = 1; i < REL.length; i++) {
-		const cur = REL[i];
-		const prev = REL[i - 1];
-		if (!cur || !prev) continue;
-		if (diff < cur[0]) return `${Math.floor(diff / prev[0])}${cur[1]} ago`;
-	}
-	return d.toLocaleDateString();
+/**
+ * Build a SessionSummary-shaped value from a live SessionUi so the shared
+ * SessionRow can render urgency/importance/AI tags/etc. without knowing
+ * about the UI session type. Only the fields SessionRow actually reads
+ * are populated; everything else is filled with safe defaults.
+ */
+function liveSummaryFromUi(s: SessionUi): SessionSummary {
+	return {
+		id: s.sessionId,
+		path: s.sessionFile ?? s.cwd,
+		cwd: s.cwd,
+		title: s.sessionName,
+		createdAt: "",
+		updatedAt: s.meta?.aiGeneratedAt ?? "",
+		messageCount: s.usage.totalTokens > 0 ? 1 : 0,
+		urgency: s.meta?.urgency,
+		importance: s.meta?.importance,
+		status: s.meta?.archived ? "archived" : "active",
+		archived: s.meta?.archived,
+		aiSummary: s.meta?.aiSummary,
+		aiTags: s.meta?.aiTags,
+		aiGeneratedAt: s.meta?.aiGeneratedAt,
+		repoId: undefined,
+		worktree: undefined,
+	};
 }
 
 // ─── Onboarding follow-up tiles ─────────────────────────────────────────────

@@ -1,9 +1,9 @@
-import type { ImageAttachment } from "@omp-deck/protocol";
+import type { ImageAttachment, ServerFrame } from "@omp-deck/protocol";
 
 import { loadTelegramBridgeConfig, type TelegramBridgeConfig } from "./config.ts";
 import { DeckClient, SessionNotActiveError } from "./deck.ts";
 import { nowIso, TelegramBridgeStore, type ChatSessionMapping } from "./store.ts";
-import { TelegramApi, type TelegramMessage, type TelegramPhotoSize, type TelegramUpdate } from "./telegram.ts";
+import { TelegramApi, type TelegramCallbackQuery, type TelegramMessage, type TelegramPhotoSize, type TelegramUpdate } from "./telegram.ts";
 
 const TELEGRAM_TEXT_LIMIT = 3900;
 
@@ -12,12 +12,13 @@ class TelegramBridge {
 	private readonly deck: DeckClient;
 	private readonly store: TelegramBridgeStore;
 	private readonly queues = new Map<string, Promise<void>>();
+	private readonly subscribedSessions = new Set<string>();
 	private offset: number | undefined;
 	private stopping = false;
 
 	constructor(private readonly config: TelegramBridgeConfig) {
 		this.telegram = new TelegramApi(config.botToken);
-		this.deck = new DeckClient(config.deckApiBase, config.deckWsUrl);
+		this.deck = new DeckClient(config.deckApiBase, config.deckWsUrl, config.deckApiToken);
 		this.store = new TelegramBridgeStore(config.dbPath);
 	}
 
@@ -28,6 +29,7 @@ class TelegramBridge {
 			dbPath: this.config.dbPath,
 			allowedUsers: this.config.allowedUserIds.size,
 		});
+		this.schedulePlanListener();
 		while (!this.stopping) {
 			try {
 				const updates = await this.telegram.getUpdates(this.offset, this.config.pollTimeoutSeconds);
@@ -49,18 +51,163 @@ class TelegramBridge {
 
 	private acceptUpdate(update: TelegramUpdate): void {
 		this.offset = Math.max(this.offset ?? 0, update.update_id + 1);
-		const message = update.message;
-		if (!message) return;
-		const chatId = String(message.chat.id);
+		if (update.message) {
+			this.dispatchByChat(String(update.message.chat.id), () => this.handleMessage(update.message!));
+		} else if (update.callback_query) {
+			this.dispatchByChat(this.callbackChatKey(update.callback_query), () =>
+				this.handleCallbackQuery(update.callback_query!),
+			);
+		}
+	}
+
+	private callbackChatKey(query: TelegramCallbackQuery): string {
+		// The originating chat is on the message the button was attached to.
+		// Fall back to the callback's `chat` field for older Telegram clients.
+		const id = query.message?.chat.id ?? query.chat?.id;
+		return id !== undefined ? String(id) : "callback:unknown";
+	}
+
+	private dispatchByChat(chatId: string, work: () => Promise<void>): void {
 		const prev = this.queues.get(chatId) ?? Promise.resolve();
 		const next = prev
 			.catch(() => undefined)
-			.then(() => this.handleMessage(message))
-			.catch((err) => console.error("telegram message handling failed", { chatId, err }))
+			.then(() => work())
+			.catch((err) => console.error("telegram update handling failed", { chatId, err }))
 			.finally(() => {
 				if (this.queues.get(chatId) === next) this.queues.delete(chatId);
 			});
 		this.queues.set(chatId, next);
+	}
+
+	private async handleCallbackQuery(query: TelegramCallbackQuery): Promise<void> {
+		const data = query.data;
+		if (!data) return;
+		const match = /^plan:([^:]+):([^:]+):(approve|deny)$/.exec(data);
+		if (!match) {
+			await this.telegram.answerCallbackQuery(query.id, "Unknown action");
+			return;
+		}
+		const [, sessionId, proposalId, decision] = match;
+		const approved = decision === "approve";
+		try {
+			await this.deck.respondToPlanApproval(sessionId!, proposalId!, approved);
+		} catch (err) {
+			console.warn("plan_response failed", { sessionId, proposalId, err });
+			await this.telegram.answerCallbackQuery(query.id, "Bridge error");
+			return;
+		}
+		const label = approved ? "Approved" : "Denied";
+		await this.telegram.answerCallbackQuery(query.id, label);
+		const originating = query.message;
+		if (originating) {
+			try {
+				await this.telegram.editMessageText(
+					originating.chat.id,
+					originating.message_id,
+					`Plan ${label.toLowerCase()}.`,
+				);
+			} catch (err) {
+				console.warn("plan approval message edit failed", { err });
+			}
+		}
+	}
+
+	/**
+	 * Subscribe to every mapped session through a single WebSocket, route
+	 * `plan_proposed` frames to the corresponding chat, and reconnect on
+	 * failure with backoff. Each session is subscribed at most once to
+	 * avoid duplicate frames.
+	 */
+	private schedulePlanListener(): void {
+		this.runPlanListener().catch((err) => {
+			if (!this.stopping) console.warn("plan listener terminated", err);
+		});
+	}
+
+	private async runPlanListener(): Promise<void> {
+		while (!this.stopping) {
+			try {
+				await this.runPlanListenerOnce();
+			} catch (err) {
+				if (this.stopping) return;
+				console.warn("plan listener reconnect after error", err);
+				await sleep(5000);
+			}
+		}
+	}
+
+	private async runPlanListenerOnce(): Promise<void> {
+		const ws = new WebSocket(
+			this.deck.wsUrl,
+			this.deck.apiToken ? { headers: { authorization: `Bearer ${this.deck.apiToken}` } } : undefined,
+		);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				ws.onopen = () => resolve();
+				ws.onerror = () => reject(new Error("plan listener websocket failed"));
+			});
+		} catch (err) {
+			try {
+				ws.close();
+			} catch {
+				// already closed
+			}
+			throw err;
+		}
+		const pending: Record<string, Promise<void>> = {};
+		const sessionIds = this.store.all().map((m) => m.sessionId);
+		for (const sessionId of sessionIds) {
+			ws.send(JSON.stringify({ type: "subscribe", sessionId }));
+			this.subscribedSessions.add(sessionId);
+		}
+		await new Promise<void>((resolve) => {
+			ws.onmessage = (ev) => {
+				let frame: ServerFrame;
+				try {
+					frame = JSON.parse(String(ev.data)) as ServerFrame;
+				} catch {
+					return;
+				}
+				if (frame.type === "plan_proposed") {
+					// Fire-and-forget: don't block the WS read loop on a Telegram send.
+					pending[frame.proposalId] = this.handlePlanProposed(frame).finally(() => {
+						delete pending[frame.proposalId];
+					});
+				}
+			};
+			ws.onerror = () => {
+				// Surfaced via the close handler below.
+			};
+			ws.onclose = () => resolve();
+		});
+		try {
+			ws.close();
+		} catch {
+			// already closed
+		}
+		await Promise.allSettled(Object.values(pending));
+		this.subscribedSessions.clear();
+	}
+
+	private async handlePlanProposed(frame: Extract<ServerFrame, { type: "plan_proposed" }>): Promise<void> {
+		const mapping = this.store.findBySessionId(frame.sessionId);
+		if (!mapping) return;
+		const chatId = mapping.chatId;
+		const sessionId = frame.sessionId;
+		const proposalId = frame.proposalId;
+		const preview = truncateTelegramText(frame.planContent || frame.suggestedTitle);
+		const text = `Plan proposed: ${frame.suggestedTitle}\n\n${preview}`;
+		const buttons = [
+			[
+				{ text: "Approve", callbackData: `plan:${sessionId}:${proposalId}:approve` },
+				{ text: "Deny", callbackData: `plan:${sessionId}:${proposalId}:deny` },
+			],
+		];
+		try {
+			await this.telegram.sendMessageWithKeyboard(chatId, text, buttons);
+		} catch (err) {
+			console.warn("plan proposal telegram send failed", { sessionId, proposalId, err });
+		}
 	}
 
 	private async handleMessage(message: TelegramMessage): Promise<void> {

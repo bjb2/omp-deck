@@ -46,6 +46,7 @@ import type {
 } from "@omp-deck/protocol";
 
 import { logger } from "./log.ts";
+import { atomicWriteSync } from "./env-store.ts";
 
 const log = logger("kb");
 
@@ -398,7 +399,9 @@ export class KbService {
 	 * Frontmatter is validated by re-running parseFrontmatter on the incoming
 	 * content. Invalid YAML returns `{ kind: "invalid-frontmatter", message }`
 	 * so the editor can surface the parser's complaint. Writes go through a
-	 * temp + rename pair so concurrent reads never see a half-written file.
+	 *    temp + writeFile + fsync + rename pair (the shared `atomicWriteSync`
+	 *    helper from env-store.ts) so concurrent reads never see a half-written
+	 *    file and a crash mid-write leaves the previous contents intact.
 	 */
 	async saveFile(
 		subpath: string,
@@ -409,6 +412,7 @@ export class KbService {
 		| { kind: "not-found" }
 		| { kind: "conflict" }
 		| { kind: "invalid-path" }
+		| { kind: "mkdir-failed"; message: string }
 		| { kind: "invalid-frontmatter"; message: string }
 	> {
 		await this.ensureIndex();
@@ -430,31 +434,38 @@ export class KbService {
 
 		// Ensure parent dir exists for create. Update is a no-op since the
 		// existence check above guarantees the dir.
+		// Also auto-make the kb root itself: a fresh install may point at e.g.
+		// ~/kb which the user has not created yet. The welcome pane offers
+		// "Create starter README" but a user may skip it and POST a file
+		// directly — that should still succeed and surface a clear error if
+		// mkdir is denied (read-only FS, permission denied, etc).
 		if (mode === "create") {
+			try {
+				await mkdir(this.root, { recursive: true });
+			} catch (err) {
+				log.error(`mkdir failed at ${this.root}`, err);
+				return { kind: "mkdir-failed", message: String((err as Error).message ?? err) };
+			}
 			const parent = path.dirname(abs);
 			try {
 				await mkdir(parent, { recursive: true });
 			} catch (err) {
 				log.error(`mkdir failed at ${parent}`, err);
-				return { kind: "invalid-path" };
+				return { kind: "mkdir-failed", message: String((err as Error).message ?? err) };
 			}
 		}
 
-		// Atomic write: temp file in the same dir, then rename. Single-drive
-		// assumption (kb-cockpit-proposal decision 4). Rename across drives
-		// would fail; we'd need a cp+rm fallback, which is out of v1.
-		const dir = path.dirname(abs);
-		const tmp = path.join(dir, `.${path.basename(abs)}.${process.pid}.${Date.now()}.tmp`);
+		// Durability: routed through atomicWriteSync from env-store.ts so
+		// every user-writable surface (kb, env, session pins, custom
+		// providers, the gholam token) goes through one tmp+fsync+rename
+		// implementation. Concurrent readers never see a half-written file;
+		// the tmp is fsync'd before the rename, so a crash leaves either the
+		// old contents or the new contents — never a torn write. Single-drive
+		// assumption (rename across drives would fail; decision 4 rationale).
 		try {
-			await writeFile(tmp, content, "utf8");
-			await rename(tmp, abs);
+			await atomicWriteSync(abs, content);
 		} catch (err) {
 			log.error(`atomic save failed at ${abs}`, err);
-			try {
-				await rm(tmp, { force: true });
-			} catch {
-				// best-effort
-			}
 			throw err;
 		}
 
@@ -809,7 +820,10 @@ export class KbService {
 		const abs = rel ? path.join(this.root, rel) : this.root;
 		const resolved = path.resolve(abs);
 		const rootResolved = path.resolve(this.root);
-		if (!resolved.startsWith(rootResolved)) return undefined;
+		// Sibling `/home/user/kb-x` would pass a plain `startsWith(root)` check
+		// against `/home/user/kb`; require the exact root OR a descendant
+		// segment so path traversal via crafted suffixes can't escape.
+		if (resolved !== rootResolved && !resolved.startsWith(rootResolved + path.sep)) return undefined;
 		return resolved;
 	}
 

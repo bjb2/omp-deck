@@ -4,6 +4,7 @@
   "title": "RoutineStep — set_state",
   "description": "Atomically upsert key/value pairs into the routine's cross-run state. Values are templated; they may reference any prior step's output.",
   "type": "object",
+  "unevaluatedProperties": false,
   "allOf": [
     { "$ref": "https://omp-deck.app/schemas/step-common.json" },
     {

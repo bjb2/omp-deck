@@ -7,18 +7,24 @@
  * back as 400/500.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import type {
 	CreateTaskRequest,
 	CreateTaskStateRequest,
 	ListTasksResponse,
 	MoveTaskRequest,
+	TaskDispatch,
+	TaskDispatchBranch,
 	UpdateTaskRequest,
 	UpdateTaskStateRequest,
 } from "@omp-deck/protocol";
 
 import { logger } from "./log.ts";
 import { broadcastBus } from "./broadcast-bus.ts";
+import type { AgentBridge } from "./bridge/types.ts";
+import { id } from "./db/index.ts";
 import {
 	createState,
 	createTask,
@@ -33,6 +39,7 @@ import {
 	updateState,
 	updateTask,
 } from "./db/tasks.ts";
+import { createWorktree, GitError, mergeBranch, removeWorktree } from "./git-service.ts";
 
 const log = logger("routes:tasks");
 
@@ -40,7 +47,7 @@ function notifyTasksChanged(): void {
 	broadcastBus.broadcast({ type: "tasks_changed" });
 }
 
-export function buildTasksRouter(): Hono {
+export function buildTasksRouter(bridge?: AgentBridge): Hono {
 	const app = new Hono();
 
 	// ─── Tasks ─────────────────────────────────────────────────────────────
@@ -122,6 +129,193 @@ export function buildTasksRouter(): Hono {
 			log.error(`moveTask failed`, err);
 			return c.json({ error: String(err) }, 400);
 		}
+	});
+
+	// ─── Dispatch ──────────────────────────────────────────────────────────
+
+	app.post("/tasks/:id/dispatch", async (c) => {
+		const taskId = c.req.param("id");
+		const task = getTask(taskId);
+		if (!task) return c.json({ error: "task not found" }, 404);
+
+		let body: { branches?: number; prompt?: string };
+		try {
+			body = (await c.req.json()) as { branches?: number; prompt?: string };
+		} catch {
+			return c.json({ error: "invalid json" }, 400);
+		}
+
+		const branchesCount = body.branches;
+		if (
+			typeof branchesCount !== "number" ||
+			!Number.isInteger(branchesCount) ||
+			branchesCount < 2 ||
+			branchesCount > 5
+		) {
+			return c.json({ error: "branches must be between 2 and 5" }, 400);
+		}
+
+		if (!task.cwd) {
+			return c.json({ error: "task has no cwd" }, 400);
+		}
+
+		if (!existsSync(task.cwd)) {
+			return c.json({ error: "task cwd does not exist" }, 400);
+		}
+
+		if (task.dispatch?.branches.some((b) => b.status === "running")) {
+			return c.json({ error: "task already has an active dispatch" }, 409);
+		}
+
+		const createdBranches: TaskDispatchBranch[] = [];
+
+		try {
+			for (let i = 0; i < branchesCount; i++) {
+				const branchId = id().toLowerCase().slice(0, 10);
+				const branchName = `dispatch/${taskId}/${branchId}`;
+				const worktreePath = join(task.cwd, ".omp-deck-worktrees", taskId, branchId);
+
+				await createWorktree(task.cwd, branchName, worktreePath);
+
+				let sessionId: string | null = null;
+				if (bridge) {
+					const session = await bridge.createSession({ cwd: worktreePath });
+					sessionId = session.sessionId;
+					if (body.prompt) {
+						const handle = bridge.getSession(sessionId);
+						if (handle) {
+							handle.prompt(body.prompt).catch((err) => {
+								log.error(`failed to send initial prompt to dispatch session ${sessionId}`, err);
+							});
+						}
+					}
+				}
+
+				createdBranches.push({
+					id: branchId,
+					worktreePath,
+					branchName,
+					sessionId,
+					status: "running",
+					createdAt: new Date().toISOString(),
+				});
+			}
+
+			const dispatch: TaskDispatch = { branches: createdBranches };
+			const dispatchJson = JSON.stringify(dispatch);
+			const updated = updateTask(taskId, { dispatchJson });
+			notifyTasksChanged();
+			return c.json(updated);
+		} catch (err) {
+			log.error(`dispatch failed for task ${taskId}`, err);
+			// Rollback any worktrees created during this attempt
+			for (const b of createdBranches) {
+				try {
+					await removeWorktree(task.cwd, b.worktreePath, { force: true });
+				} catch {
+					// best-effort cleanup
+				}
+				if (bridge && b.sessionId) {
+					try {
+						const handle = bridge.getSession(b.sessionId);
+						if (handle) {
+							await handle.abort();
+							await handle.dispose();
+						}
+					} catch {
+						// best-effort cleanup
+					}
+				}
+			}
+			return c.json({ error: err instanceof GitError ? err.stderr || err.message : String(err) }, 500);
+		}
+	});
+
+	app.post("/tasks/:id/dispatch/:branchId/merge", async (c) => {
+		const taskId = c.req.param("id");
+		const branchId = c.req.param("branchId");
+		const task = getTask(taskId);
+		if (!task) return c.json({ error: "task not found" }, 404);
+
+		if (!task.cwd || !existsSync(task.cwd)) {
+			return c.json({ error: "task cwd does not exist" }, 400);
+		}
+
+		const branches = task.dispatch?.branches ?? [];
+		const branch = branches.find((b) => b.id === branchId);
+		if (!branch) {
+			return c.json({ error: "branch not found" }, 404);
+		}
+
+		if (branch.status !== "running") {
+			return c.json({ error: "branch is not running" }, 409);
+		}
+
+		try {
+			await mergeBranch(task.cwd, branch.branchName, { noFf: true });
+		} catch (err) {
+			if (err instanceof GitError) {
+				return c.json({ error: err.stderr || err.message }, 409);
+			}
+			return c.json({ error: String(err) }, 500);
+		}
+
+		try {
+			await removeWorktree(task.cwd, branch.worktreePath, { force: true });
+		} catch (err) {
+			log.warn(`failed to remove worktree at ${branch.worktreePath} after merge`, err);
+		}
+
+		branch.status = "merged";
+		const dispatchJson = JSON.stringify({ branches });
+		const updated = updateTask(taskId, { dispatchJson });
+		notifyTasksChanged();
+		return c.json(updated);
+	});
+
+	app.post("/tasks/:id/dispatch/:branchId/discard", async (c) => {
+		const taskId = c.req.param("id");
+		const branchId = c.req.param("branchId");
+		const task = getTask(taskId);
+		if (!task) return c.json({ error: "task not found" }, 404);
+
+		if (!task.cwd || !existsSync(task.cwd)) {
+			return c.json({ error: "task cwd does not exist" }, 400);
+		}
+
+		const branches = task.dispatch?.branches ?? [];
+		const branch = branches.find((b) => b.id === branchId);
+		if (!branch) {
+			return c.json({ error: "branch not found" }, 404);
+		}
+
+		if (branch.status !== "running") {
+			return c.json({ error: "branch is not running" }, 409);
+		}
+
+		try {
+			await removeWorktree(task.cwd, branch.worktreePath, { force: true });
+		} catch (err) {
+			log.warn(`failed to remove worktree at ${branch.worktreePath} during discard`, err);
+		}
+
+		if (bridge && branch.sessionId) {
+			try {
+				const handle = bridge.getSession(branch.sessionId);
+				if (handle) {
+					await handle.abort();
+					await handle.dispose();
+				}
+			} catch (err) {
+				log.warn(`failed to dispose session ${branch.sessionId} during discard`, err);
+			}
+		}
+
+		branch.status = "discarded";
+		const dispatchJson = JSON.stringify({ branches });
+		const updated = updateTask(taskId, { dispatchJson });
+		notifyTasksChanged();
+		return c.json(updated);
 	});
 
 	// ─── States ────────────────────────────────────────────────────────────

@@ -1,0 +1,346 @@
+modelRoles: 
+  plan: anthropic/claude-fable-5:low
+  task: minimax-code/MiniMax-M3:medium
+  smol: omni/qwen-web/qwen3.8-max:medium
+  designer: anthropic/claude-fable-5:low
+  tiny: anthropic/claude-haiku-4-5-20251001:medium
+  commit: anthropic/claude-haiku-4-5-20251001:medium
+  vision: anthropic/claude-sonnet-5:low
+  slow: anthropic/claude-fable-5:medium
+  default: minimax-code/MiniMax-M3:medium
+  advisor: omni/cgpt-web/gpt-5.6-thinking:medium
+disabledExtensions: 
+  - skill:dopeller-bot-factory
+  - skill:dopeller-creator-studio
+  - skill:dopeller-discovery
+  - skill:dopeller-growth-analytics
+  - skill:coolify-deploy-playbooks
+  - skill:dopeller-manifest-generator
+  - skill:dopeller-media-engine
+  - skill:dopeller-monetization
+  - skill:dopeller-platform-guard
+  - skill:dopeller-streaming-engine
+  - skill:dopeller-telegram-ux
+  - skill:dopeller-tool-runtime
+  - skill:janitor
+  - skill:opencode-plugin-master
+  - skill:persona-engine
+  - skill:ecc:agent-eval
+  - context-file:user:CLAUDE.md
+theme: 
+  dark: dark-abyss
+  light: dark-retro
+symbolPreset: ascii
+colorBlindMode: true
+statusLine: 
+  preset: full
+  separator: ascii
+  sessionAccent: true
+  transparent: false
+  compactThinkingLevel: true
+  showHookStatus: true
+images: 
+  blockImages: false
+  describeForTextModels: true
+display: 
+  showTokenUsage: true
+  shimmer: kitt
+  smoothStreaming: true
+  cacheMissMarker: true
+showHardwareCursor: false
+browser: 
+  headless: false
+  screenshotDir: ~/Downloads/pi-screenshot
+repeatToolDescriptions: false
+autoResume: true
+steeringMode: one-at-a-time
+followUpMode: minimal
+interruptMode: immediate
+loop: 
+  mode: "off"
+compaction: 
+  handoffSaveToDisk: true
+  idleEnabled: true
+  strategy: context-full
+  thresholdPercent: 75
+  thresholdTokens: -1
+branchSummary: 
+  enabled: true
+memories: 
+  enabled: false
+readLineNumbers: true
+lsp: 
+  formatOnWrite: true
+  diagnosticsOnEdit: true
+python: 
+  toolMode: both
+  kernelMode: session
+  interpreter: ""
+todo: 
+  eager: preferred
+  remindersMax: 3
+renderMermaid: 
+  enabled: true
+calc: 
+  enabled: true
+inspect_image: 
+  mode: "on"
+checkpoint: 
+  enabled: true
+github: 
+  enabled: true
+web_search: 
+  enabled: true
+tools: 
+  maxTimeout: 0
+  artifactSpillThreshold: 50
+  artifactHeadBytes: 50
+  approval: 
+    {}
+  approvalMode: yolo
+async: 
+  enabled: true
+bash: 
+  autoBackground: 
+    enabled: true
+  enabled: true
+mcp: 
+  notifications: true
+  enableProjectConfig: true
+dev: 
+  autoqaConsent: denied
+task: 
+  isolation: 
+    mode: auto
+    merge: patch
+    commits: ai
+  eager: preferred
+  maxConcurrency: 16
+  maxRecursionDepth: 3
+  agentModelOverrides: 
+    {}
+  disabledAgents: 
+    []
+  showResolvedModelBadge: true
+  enableLsp: true
+  maxRuntimeMs: 0
+  softRequestBudget: 150
+  softRequestBudgetNotice: false
+  prewalk: false
+tasks: 
+  todoClearDelay: 300
+providers: 
+  tinyModel: qwen3-0.6b
+  autoThinkingModel: online
+  memoryModel: online
+  fetch: parallel
+  tts: xai
+  anthropic: 
+    serverSideFallback: true
+  webSearchGeminiModel: ""
+  webSearchOrder: 
+    - parallel
+    - perplexity
+    - gemini
+    - anthropic
+    - codex
+    - xai
+    - zai
+    - exa
+    - tinyfish
+    - jina
+    - kagi
+    - tavily
+    - firecrawl
+    - brave
+    - kimi
+    - synthetic
+    - searxng
+    - startpage
+    - duckduckgo
+    - ecosia
+    - google
+    - mojeek
+    - public
+  imageOrder: 
+    - xai
+    - antigravity
+    - gemini
+    - openai-codex
+    - openai
+    - openrouter
+  antigravityEndpoint: auto
+  tinyModelDevice: cuda
+  tinyModelDtype: default
+  unexpectedStopModel: online
+skills: 
+  enableSkillCommands: true
+commands: 
+  enableOpencodeProject: false
+  enableClaudeProject: false
+  enableOpencodeUser: false
+  enableClaudeUser: true
+memory: 
+  backend: mnemopi
+disabledProviders: 
+  - codex
+  - opencode
+defaultThinkingLevel: auto
+setupVersion: 1
+completion: 
+  notify: "on"
+mnemopi: 
+  dbPath: ~/.omp-mem
+  noEmbeddings: false
+  llmMode: smol
+  scoping: per-project-tagged
+  polyphonicRecall: true
+  enhancedRecall: true
+  embeddingVariant: en
+  bank: ""
+  proactiveLinking: true
+  embeddingModel: ""
+edit: 
+  mode: apply_patch
+read: 
+  summarize: 
+    prose: true
+  toolResultPreview: true
+  renderMarkdown: true
+marketplace: 
+  autoUpdate: auto
+plan: 
+  enabled: true
+goal: 
+  enabled: true
+  statusInFooter: true
+secrets: 
+  enabled: true
+advisor: 
+  enabled: false
+  subagents: false
+  syncBacklog: "1"
+  immuneTurns: 3
+tui: 
+  textSizing: true
+  tight: true
+  scrollbackRebuild: true
+  hyperlinks: auto
+  imeSafeCursor: false
+hideThinkingBlock: false
+model: 
+  loopGuard: 
+    enabled: true
+    checkAssistantContent: true
+personality: pragmatic
+treeFilterMode: default
+autocompleteMaxVisible: 20
+ask: 
+  timeout: 60
+stt: 
+  enabled: true
+  modelName: parakeet
+  submitTrigger: never
+  language: en
+startup: 
+  quiet: true
+  changelogMode: summary
+power: 
+  sleepPrevention: system
+features: 
+  unexpectedStopDetection: true
+contextPromotion: 
+  enabled: true
+snapcompact: 
+  toolResults: true
+  systemPrompt: all
+  shape: silver16-bw
+autolearn: 
+  enabled: true
+  autoContinue: false
+speechgen: 
+  enabled: true
+speech: 
+  enabled: false
+  mode: assistant
+  voice: bm_fable
+  enhanced: true
+tts: 
+  localVoice: af_heart
+  localModel: kokoro
+tier: 
+  openai: auto
+  anthropic: none
+  subagent: none
+  advisor: inherit
+magicKeywords: 
+  enabled: true
+  ultrathink: true
+bashInterceptor: 
+  enabled: true
+eval: 
+  rb: true
+  jl: true
+terminal: 
+  showProgress: true
+retry: 
+  fallbackChains: 
+    plan: 
+      - anthropic/claude-sonnet-5
+    slow: 
+      - anthropic/claude-sonnet-5
+    default: 
+      - omni/qwen-web/qwen3.8-max
+      - groq/moonshotai/kimi-k2-instruct
+      - anthropic/claude-sonnet-5
+    task: 
+      - minimax/MiniMax-M3
+    smol: 
+      - cerebras/gpt-oss-120b
+    tiny: 
+      - groq/openai/gpt-oss-120b
+    commit: 
+      - groq/openai/gpt-oss-120b
+    designer: 
+      - cerebras/qwen-3-coder-480b
+    vision: 
+      - anthropic/claude-sonnet-5
+    omni/*: 
+      - minimax/MiniMax-M3
+    advisor: 
+      - omni/qwen-web/qwen3.8-max
+  usageAwareFallback: true
+  maxRetries: 10
+cycleOrder: 
+  - default
+  - smol
+  - slow
+omitThinking: true
+textVerbosity: low
+prewalk: 
+  enabled: false
+doubleEscapeAction: tree
+julia: 
+  interpreter: ""
+astGrep: 
+  enabled: true
+worktree: 
+  base: ""
+extensions: 
+  - C:/Users/PC/.omp/agent/extensions/combo-toggle/index.js
+  - C:/Users/PC/.omp/plugins/node_modules/@dietrichgebert/ponytail/pi-extension/index.js
+generate_image: 
+  enabled: true
+codexResets: 
+  autoRedeem: "yes"
+ttsr: 
+  enabled: true
+  interruptMode: always
+  repeatMode: once
+  builtinRules: true
+error: 
+  notify: "on"
+computer: 
+  display: all
+  enabled: true
+proseOnlyThinking: true

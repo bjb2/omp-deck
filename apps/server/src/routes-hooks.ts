@@ -21,6 +21,41 @@ const log = logger("routes:hooks");
 
 const SIG_HEADER = "x-routine-signature";
 
+// SECURITY-021: the abort table persisted every header on signature failure
+// — including Cookie/Authorization. Anyone reading the SQLite db (a backup,
+// the disk) recovered the requester's session cookies. Allow-list only what
+// is useful for triage; redact anything that smells like a credential.
+const HOOK_LOG_HEADERS: Record<string, true> = {
+	"x-routine-signature": true,
+	"content-type": true,
+	"x-forwarded-for": true,
+	"user-agent": true,
+};
+const HOOK_LOG_HEADER_REDACT: Record<string, true> = {
+	cookie: true,
+	authorization: true,
+	"x-api-key": true,
+};
+
+function pickRedactedHeaders(all: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [name, value] of Object.entries(all)) {
+		const lower = name.toLowerCase();
+		if (HOOK_LOG_HEADER_REDACT[lower] === true) {
+			out[name] = "[redacted]";
+			continue;
+		}
+		if (lower.includes("token") || lower.includes("secret")) {
+			out[name] = "[redacted]";
+			continue;
+		}
+		if (HOOK_LOG_HEADERS[lower] === true) {
+			out[name] = value;
+		}
+	}
+	return out;
+}
+
 export function buildHooksRouter(runner: RoutinesRunner): Hono {
 	const app = new Hono();
 
@@ -36,7 +71,10 @@ export function buildHooksRouter(runner: RoutinesRunner): Hono {
 			insertAbortedRun({
 				routineId: record.routine_id,
 				triggerKind: "webhook",
-				triggerPayload: JSON.stringify({ path, headers: { ...c.req.header() } }).slice(0, 8 * 1024),
+				triggerPayload: JSON.stringify({ path, headers: pickRedactedHeaders(c.req.header()) }).slice(
+					0,
+					8 * 1024,
+				),
 				abortReason: "signature_invalid",
 				error: `bad ${SIG_HEADER} on ${path}`,
 			});

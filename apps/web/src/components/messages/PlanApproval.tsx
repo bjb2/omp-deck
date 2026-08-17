@@ -4,6 +4,7 @@ import { Check, Pencil, X } from "lucide-react";
 import { useStore } from "@/lib/store";
 import type { SessionUi } from "@/lib/types";
 import { Markdown } from "@/lib/markdown";
+import { RichEditor } from "@/components/RichEditor";
 import { cn } from "@/lib/utils";
 
 /**
@@ -101,15 +102,15 @@ export function PlanApproval({ session }: { session: SessionUi }) {
 			</label>
 
 			{editing ? (
-				<textarea
+				<RichEditor
 					value={editedContent}
-					onChange={(e) => setEditedContent(e.target.value)}
+					onChange={(v) => setEditedContent(v)}
 					rows={Math.min(24, Math.max(8, editedContent.split("\n").length + 1))}
+					disableRichText={false}
 					className={cn(
 						"mb-3 w-full resize-y rounded border border-line bg-paper px-2 py-1.5 font-mono text-xs text-ink",
 						"focus:border-accent-plan/60 focus:outline-none",
 					)}
-					aria-label="Edit plan content"
 				/>
 			) : (
 				<div className="mb-3 max-h-[480px] overflow-y-auto rounded border border-line bg-paper p-3">

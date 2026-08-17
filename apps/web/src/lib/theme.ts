@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
  * reload still lands on the saved theme.
  */
 
-export type ThemeId = "paper" | "slate" | "horizon";
+export type ThemeId = "paper" | "slate" | "horizon" | "aurora" | "acid";
 
 export interface ThemeDefinition {
 	id: ThemeId;
@@ -59,6 +59,32 @@ export const THEMES: ThemeDefinition[] = [
 		metaThemeColor: "#1c1e26",
 		colorScheme: "dark",
 	},
+	{
+		id: "aurora",
+		label: "Aurora",
+		description: "Near-black canvas, violet-to-cyan accent, glass panels. The new default.",
+		swatchTokens: [
+			{ token: "paper", label: "Page" },
+			{ token: "paper-3", label: "Inset" },
+			{ token: "ink", label: "Ink" },
+			{ token: "accent", label: "Accent" },
+		],
+		metaThemeColor: "#0a0b10",
+		colorScheme: "dark",
+	},
+	{
+		id: "acid",
+		label: "Acid Lab",
+		description: "Red-team console. Near-black ground, acid-chartreuse accent, hairline rules, angular cut corners.",
+		swatchTokens: [
+			{ token: "paper", label: "Page" },
+			{ token: "paper-3", label: "Inset" },
+			{ token: "ink", label: "Ink" },
+			{ token: "accent", label: "Acid" },
+		],
+		metaThemeColor: "#0a0a0a",
+		colorScheme: "dark",
+	},
 ];
 
 export const THEME_IDS = THEMES.map((t) => t.id);
@@ -77,11 +103,17 @@ function readStoredTheme(): ThemeId | undefined {
 	}
 }
 
+/**
+ * Aurora is the deck's actual design — not one option among several — so it
+ * is the default for anyone who hasn't chosen otherwise, regardless of the
+ * visitor's OS color-scheme preference. An earlier version of this function
+ * gated the flagship look behind a dark-OS preference, which meant most
+ * first-time visitors (light is still the common OS default) never saw it.
+ * A saved choice in `localStorage` — including an explicit choice of Paper —
+ * always wins; this only decides what a *first* visit looks like.
+ */
 function systemPreferredTheme(): ThemeId {
-	if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-		return "slate";
-	}
-	return "paper";
+	return "acid";
 }
 
 function activeAttribute(): ThemeId {

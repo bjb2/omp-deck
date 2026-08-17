@@ -249,6 +249,16 @@ export class InProcessAgentBridge implements AgentBridge {
 		a.lastActivityAt = Date.now();
 	}
 
+	async listIdleSessions(idleMs: number): Promise<{ sessionId: string; lastActivityAt: number }[]> {
+		const cutoff = Date.now() - idleMs;
+		const out: { sessionId: string; lastActivityAt: number }[] = [];
+		for (const [sessionId, a] of this.active) {
+			if (a.lastActivityAt >= cutoff) continue;
+			out.push({ sessionId, lastActivityAt: a.lastActivityAt });
+		}
+		return out;
+	}
+
 	applyEnvUpdate(update: RuntimeEnvUpdate): void {
 		if (update.autoStartCommand !== undefined) {
 			this.autoStartCommand = update.autoStartCommand;
@@ -1003,7 +1013,10 @@ export class InProcessSessionHandle implements SessionHandle {
 		for (const entry of survivors) {
 			const opts: Record<string, unknown> = { streamingBehavior: entry.behavior };
 			if (entry.images && entry.images.length > 0) opts.images = entry.images;
-			promises.push(this.session.prompt(entry.text, opts as any));
+			// SDK v17 narrowed prompt()'s return to Promise<void>; older
+			// call sites declared Promise<boolean>. Awaiting the bool is a
+			// no-op for our purposes, so cast through unknown.
+			promises.push(this.session.prompt(entry.text, opts as any) as unknown as Promise<void>);
 		}
 		this.shadowQueue = survivors;
 		try {

@@ -8,6 +8,8 @@ export interface TelegramBridgeConfig {
 	allowedUserIds: Set<string>;
 	deckApiBase: string;
 	deckWsUrl: string;
+	/** Bearer token for the deck API; undefined when the deck has auth disabled. */
+	deckApiToken?: string;
 	defaultCwd: string;
 	dbPath: string;
 	pollTimeoutSeconds: number;
@@ -29,11 +31,16 @@ export function loadTelegramBridgeConfig(): TelegramBridgeConfig {
 	const deckWsUrl = toWsUrl(deckApiBase);
 	const dbPath = path.resolve(process.env.TELEGRAM_BRIDGE_DB_PATH?.trim() || path.join(getDataDir(), "telegram-bridge.db"));
 
+	// Present once the deck requires authentication. The supervisor puts it in
+	// the bridge's environment; an empty value simply means auth is off.
+	const deckApiToken = process.env.OMP_DECK_API_TOKEN?.trim() || undefined;
+
 	return {
 		botToken,
 		allowedUserIds,
 		deckApiBase,
 		deckWsUrl,
+		deckApiToken,
 		defaultCwd: deck.defaultCwd,
 		dbPath,
 		pollTimeoutSeconds: clamp(parseInt10(process.env.TELEGRAM_POLL_TIMEOUT_SECONDS, 30), 1, 50),

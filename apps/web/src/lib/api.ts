@@ -1,12 +1,22 @@
 import type {
+	AiMeta,
 	CreateSessionRequest,
 	CreateSessionResponse,
+	PatchSessionMetaRequest,
+	PatchSessionMetaResponse,
+	RegenerateMetaRequest,
+	RegenerateMetaResponse,
 	ListFilePathsResponse,
 	ListModelsResponse,
+	ListReposResponse,
 	ListSessionsResponse,
 	ListSlashCommandsResponse,
+	ListWorktreesResponse,
 	ListWorkspacesResponse,
 	ModelRef,
+	ListFsDialogResponse,
+	RegisterWorkspaceResponse,
+	SessionSummary,
 } from "@omp-deck/protocol";
 
 const BASE = "/api";
@@ -39,11 +49,24 @@ export const api = {
 		const q = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
 		return request<ListSessionsResponse>(`/sessions${q}`);
 	},
+	listGroupedSessions(
+		groupBy: "repo" | "status" | "urgency" | "importance",
+	): Promise<{ groups: Array<{ key: string; sessions: SessionSummary[] }> }> {
+		return request(`/sessions/grouped?groupBy=${encodeURIComponent(groupBy)}`);
+	},
 	createSession(body: CreateSessionRequest): Promise<CreateSessionResponse> {
 		return request<CreateSessionResponse>("/sessions", {
 			method: "POST",
 			body: JSON.stringify(body),
 		});
+	},
+	listRepos(): Promise<ListReposResponse> {
+		return request<ListReposResponse>("/repos");
+	},
+	listWorktrees(owner: string, repo: string): Promise<ListWorktreesResponse> {
+		return request<ListWorktreesResponse>(
+			`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/worktrees`,
+		);
 	},
 	abortSession(id: string): Promise<{ ok: true }> {
 		return request(`/sessions/${encodeURIComponent(id)}/abort`, { method: "POST" });
@@ -76,6 +99,18 @@ export const api = {
 	disposeSession(id: string): Promise<{ ok: true }> {
 		return request(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
 	},
+	regenerateSessionMeta(id: string, opts?: RegenerateMetaRequest): Promise<RegenerateMetaResponse> {
+		return request<RegenerateMetaResponse>(`/sessions/${encodeURIComponent(id)}/regenerate-meta`, {
+			method: "POST",
+			body: JSON.stringify(opts ?? {}),
+		});
+	},
+	patchSessionMeta(id: string, patch: PatchSessionMetaRequest): Promise<PatchSessionMetaResponse> {
+		return request<PatchSessionMetaResponse>(`/sessions/${encodeURIComponent(id)}/meta`, {
+			method: "PATCH",
+			body: JSON.stringify(patch),
+		});
+	},
 	listSlashCommands(cwd?: string): Promise<ListSlashCommandsResponse> {
 		const q = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
 		return request<ListSlashCommandsResponse>(`/slash-commands${q}`);
@@ -83,5 +118,16 @@ export const api = {
 	completeFilePath(cwd: string, q: string, limit = 20): Promise<ListFilePathsResponse> {
 		const params = new URLSearchParams({ cwd, q, limit: String(limit) });
 		return request<ListFilePathsResponse>(`/fs/complete?${params.toString()}`);
+	},
+	listFsDialog(cwd: string, q?: string, limit = 200): Promise<ListFsDialogResponse> {
+		const params = new URLSearchParams({ cwd, limit: String(limit) });
+		if (q) params.set("q", q);
+		return request<ListFsDialogResponse>(`/fs/dialog?${params.toString()}`);
+	},
+	registerWorkspace(cwd: string): Promise<RegisterWorkspaceResponse> {
+		return request<RegisterWorkspaceResponse>("/workspaces/register", {
+			method: "POST",
+			body: JSON.stringify({ cwd }),
+		});
 	},
 };

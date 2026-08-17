@@ -61,6 +61,16 @@ export class ExtensionUIBridge implements ExtensionUIContext {
 	private nextDialogId = 1;
 	private disposed = false;
 
+	/**
+	 * v17 added `addAutocompleteProvider` to ExtensionUIContext. The deck
+	 * doesn't render a TUI autocomplete, so this is a no-op stub.
+	 */
+	addAutocompleteProvider(_provider: unknown): void {
+		// No-op: the web UI doesn't host a slash-command autocomplete that
+		// extension tools would inject into. Left here so the structural
+		// `implements` check stays satisfied.
+	}
+
 	constructor(sessionId: string) {
 		this.sessionId = sessionId;
 	}

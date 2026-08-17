@@ -1,4 +1,22 @@
 import type { ClientFrame, ServerFrame } from "@omp-deck/protocol";
+import * as idbQueue from "./idb-queue";
+import { replayQueuedOps } from "./prompts-api";
+
+/** ClientFrame kinds that mutate server state and therefore survive a tab
+ *  close while offline. `subscribe` is deliberately excluded — it is
+ *  reconnect-derived state the server re-derives on every connect, so
+ *  persisting it would just produce duplicate subscriptions. The list is
+ *  ordered by frequency of use; the order does not affect FIFO drain. */
+const PERSISTED_FRAME_TYPES = new Set<ClientFrame["type"]>([
+	"prompt",
+	"edit_queued",
+	"cancel_queued",
+	"clear_queue",
+	"abort",
+	"plan_response",
+	"ext_ui_dialog_response",
+	"set_plan_mode",
+]);
 
 type Listener = (frame: ServerFrame) => void;
 type StatusListener = (status: WsStatus) => void;
@@ -32,6 +50,10 @@ export class WsClient {
 			this.setStatus("open");
 			this.retryDelay = 500;
 			this.flushQueue();
+			// Co-drain any queued HTTP ops (create/update/import) so a
+			// single reconnect unifies both transports. Errors are logged
+			// inside the helper; we don't gate the WS flush on HTTP success.
+			void replayQueuedOps();
 		});
 
 		sock.addEventListener("message", (ev) => {
@@ -74,6 +96,14 @@ export class WsClient {
 		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
 			this.socket.send(JSON.stringify(frame));
 		} else {
+			// Persist mutating frames to IndexedDB so the user's intent
+			// survives a full tab close while offline. Read-only frames
+			// (e.g. `subscribe`) stay in-memory; the WS reconnects within
+			// the backoff window and `flushQueue` will drain them in FIFO
+			// order (IDB cursor + in-memory queue tail).
+			if (PERSISTED_FRAME_TYPES.has(frame.type)) {
+				void idbQueue.enqueue(frame as unknown as { id?: string; [k: string]: unknown });
+			}
 			this.queue.push(frame);
 		}
 	}
@@ -104,6 +134,15 @@ export class WsClient {
 	}
 
 	private flushQueue(): void {
+		// First: drain any persisted prompts from IDB. They survived a
+		// tab close, so they go out before the in-memory tail.
+		void idbQueue.drain(async (frame) => {
+			if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+				this.socket.send(JSON.stringify(frame));
+				return true;
+			}
+			return false;
+		});
 		while (this.queue.length > 0 && this.socket?.readyState === WebSocket.OPEN) {
 			const f = this.queue.shift()!;
 			this.socket.send(JSON.stringify(f));
@@ -119,4 +158,16 @@ export class WsClient {
 			this.connect();
 		}, delay);
 	}
+}
+
+/**
+ * Filter helper for chat-thread subscribers: returns a subset of frames
+ * related to a single chat. Matches the runtime-loop frames (§1 of
+ * docs/GENERATIVE.md).
+ */
+export function isGholamChatFrame(chatId: string): (frame: ServerFrame) => boolean {
+	return (frame) =>
+		(frame.type === "gholam_chat_message" && frame.chatId === chatId) ||
+		(frame.type === "gholam_chat_state" && frame.chatId === chatId) ||
+		(frame.type === "gholam_chat_usage" && frame.chatId === chatId);
 }

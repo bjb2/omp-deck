@@ -1,0 +1,5 @@
+[test]
+# Layout.test.tsx (and any other .tsx tests) are vitest-only — they need
+# @testing-library/react + jsdom. The vitest lane at apps/web/vitest.config.ts
+# covers them; bun test only runs the .test.ts files that use bun:test.
+pathIgnorePatterns = ["src/**/*.test.tsx", "node_modules/**", "dist/**"]

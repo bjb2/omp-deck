@@ -1,0 +1,11 @@
+[test]
+# *.test.tsx in apps/web/src/components/ are vitest-only (they use
+# @testing-library/react + jsdom). apps/web/bunfig.toml handles the
+# in-workspace case; this root file mirrors the exclusion so the root
+# `bun test` script (which discovers tests in all workspaces) does not
+# try to run them under bun:test where `document` is undefined.
+pathIgnorePatterns = [
+	"apps/web/src/**/*.test.tsx",
+	"node_modules/**",
+	"dist/**",
+]

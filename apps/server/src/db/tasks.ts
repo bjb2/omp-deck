@@ -6,7 +6,7 @@
  * tricks. A move == one transaction that renumbers the destination column.
  */
 
-import type { Task, TaskState } from "@omp-deck/protocol";
+import type { Task, TaskDispatch, TaskState } from "@omp-deck/protocol";
 
 import { getDb, id, nowIso } from "./index.ts";
 
@@ -22,6 +22,8 @@ interface TaskRow {
 	updated_at: string;
 	state_entered_at: string;
 	archived_at: string | null;
+	dispatch_json: string | null;
+	energy_tag: "low" | "medium" | "high" | null;
 }
 
 interface StateRow {
@@ -46,6 +48,15 @@ function rowToTask(r: TaskRow): Task {
 	};
 	if (r.cwd !== null) t.cwd = r.cwd;
 	if (r.archived_at !== null) t.archivedAt = r.archived_at;
+	if (r.energy_tag !== null) t.energyTag = r.energy_tag;
+	if (r.dispatch_json !== null) {
+		t.dispatchJson = r.dispatch_json;
+		try {
+			t.dispatch = JSON.parse(r.dispatch_json) as TaskDispatch;
+		} catch {
+			// ignore malformed JSON
+		}
+	}
 	return t;
 }
 
@@ -202,7 +213,7 @@ export function listTasks(opts: { includeArchived?: boolean } = {}): Task[] {
 	const where = opts.includeArchived ? "" : "WHERE archived_at IS NULL";
 	const rows = getDb()
 		.query<TaskRow, []>(
-			`SELECT id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at, archived_at
+			`SELECT id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at, archived_at, dispatch_json, energy_tag
 			 FROM tasks
 			 ${where}
 			 ORDER BY state_id, state_entered_at DESC, order_in_state ASC`,
@@ -214,7 +225,7 @@ export function listTasks(opts: { includeArchived?: boolean } = {}): Task[] {
 export function getTask(taskId: string): Task | undefined {
 	const row = getDb()
 		.query<TaskRow, [string]>(
-			`SELECT id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at, archived_at
+			`SELECT id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at, archived_at, dispatch_json, energy_tag
 			 FROM tasks WHERE id = ?`,
 		)
 		.get(taskId) as TaskRow | null;
@@ -226,6 +237,8 @@ export function createTask(input: {
 	body?: string;
 	stateId?: string;
 	cwd?: string;
+	energyTag?: "low" | "medium" | "high";
+	dispatchJson?: string;
 }): Task {
 	const db = getDb();
 	const state = input.stateId ? getState(input.stateId) : getDefaultState();
@@ -248,10 +261,39 @@ export function createTask(input: {
 			.get() as { value: number } | null;
 		if (!seqRow) throw new Error("tasks sequence missing — migration 002 not applied");
 		displayId = seqRow.value;
-		db.prepare<unknown, [string, number, string, string, string, number, string | null, string, string, string]>(
-			`INSERT INTO tasks (id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		).run(taskId, displayId, input.title, input.body ?? "", state.id, maxOrder + 1000, input.cwd ?? null, now, now, now);
+		db.prepare<
+			unknown,
+			[
+				string,
+				number,
+				string,
+				string,
+				string,
+				number,
+				string | null,
+				string,
+				string,
+				string,
+				string | null,
+				string | null,
+			]
+		>(
+			`INSERT INTO tasks (id, display_id, title, body, state_id, order_in_state, cwd, created_at, updated_at, state_entered_at, dispatch_json, energy_tag)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		).run(
+			taskId,
+			displayId,
+			input.title,
+			input.body ?? "",
+			state.id,
+			maxOrder + 1000,
+			input.cwd ?? null,
+			now,
+			now,
+			now,
+			input.dispatchJson ?? null,
+			input.energyTag ?? null,
+		);
 	})();
 	const out = getTask(taskId);
 	if (!out) throw new Error("createTask failed");
@@ -267,6 +309,8 @@ export function updateTask(
 		orderInState?: number;
 		cwd?: string;
 		archived?: boolean;
+		energyTag?: "low" | "medium" | "high" | null;
+		dispatchJson?: string | null;
 	},
 ): Task | undefined {
 	const existing = getTask(taskId);
@@ -280,13 +324,30 @@ export function updateTask(
 	// edits must NOT reset the per-column recency sort.
 	const stateChanged = patch.stateId !== undefined && patch.stateId !== existing.stateId;
 	const stateEnteredAt = stateChanged ? nowIso() : existing.stateEnteredAt;
+	const dispatchJson =
+		patch.dispatchJson !== undefined ? patch.dispatchJson : (existing.dispatchJson ?? null);
+	const energyTag =
+		patch.energyTag !== undefined ? patch.energyTag : (existing.energyTag ?? null);
 	db.prepare<
 		unknown,
-		[string, string, string, number, string | null, string, string, string | null, string]
+		[
+			string,
+			string,
+			string,
+			number,
+			string | null,
+			string,
+			string,
+			string | null,
+			string | null,
+			string | null,
+			string,
+		]
 	>(
 		`UPDATE tasks
 		   SET title = ?, body = ?, state_id = ?, order_in_state = ?, cwd = ?,
-		       updated_at = ?, state_entered_at = ?, archived_at = ?
+		       updated_at = ?, state_entered_at = ?, archived_at = ?,
+		       dispatch_json = ?, energy_tag = ?
 		 WHERE id = ?`,
 	).run(
 		next.title,
@@ -297,6 +358,8 @@ export function updateTask(
 		nowIso(),
 		stateEnteredAt,
 		archivedAt,
+		dispatchJson,
+		energyTag,
 		taskId,
 	);
 	return getTask(taskId);

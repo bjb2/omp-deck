@@ -1,6 +1,7 @@
 export interface TelegramUpdate {
 	update_id: number;
 	message?: TelegramMessage;
+	callback_query?: TelegramCallbackQuery;
 }
 
 export interface TelegramMessage {
@@ -18,6 +19,19 @@ export interface TelegramPhotoSize {
 	width: number;
 	height: number;
 	file_size?: number;
+}
+
+export interface TelegramCallbackQuery {
+	id: string;
+	from?: { id: number; is_bot?: boolean; username?: string; first_name?: string };
+	chat?: { id: number; type: string };
+	message?: { message_id: number; chat: { id: number; type: string } };
+	data?: string;
+}
+
+export interface InlineKeyboardButton {
+	text: string;
+	callbackData: string;
 }
 
 interface TelegramResponse<T> {
@@ -53,7 +67,7 @@ export class TelegramApi {
 		return this.call<TelegramUpdate[]>("getUpdates", {
 			...(offset !== undefined ? { offset } : {}),
 			timeout,
-			allowed_updates: ["message"],
+			allowed_updates: ["message", "callback_query"],
 		});
 	}
 
@@ -73,6 +87,36 @@ export class TelegramApi {
 			text,
 			disable_web_page_preview: true,
 		});
+	}
+
+	sendMessageWithKeyboard(
+		chatId: number | string,
+		text: string,
+		buttons: InlineKeyboardButton[][],
+	): Promise<TelegramSentMessage> {
+		return this.call<TelegramSentMessage>("sendMessage", {
+			chat_id: chatId,
+			text,
+			disable_web_page_preview: true,
+			reply_markup: {
+				inline_keyboard: buttons.map((row) =>
+					row.map((b) => ({ text: b.text, callback_data: b.callbackData })),
+				),
+			},
+		});
+	}
+
+	async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+		try {
+			await this.call<boolean>("answerCallbackQuery", {
+				callback_query_id: callbackQueryId,
+				...(text !== undefined ? { text } : {}),
+			});
+		} catch (err) {
+			// Telegram requires acknowledgement within ~30s; if the API is briefly
+			// flaky we still want the rest of the flow to proceed.
+			console.warn("answerCallbackQuery failed", err);
+		}
 	}
 
 	async downloadPhoto(photo: TelegramPhotoSize): Promise<{ data: string; mimeType: string }> {

@@ -10,12 +10,29 @@ export interface Config {
 	agentDir?: string;
 	webDist?: string;
 	devMode: boolean;
+	/**
+	 * Resolved absolute path of `OMP_DECK_CLONE_ROOT`. When set, the GitHub
+	 * clone button targets this directory instead of the first available
+	 * workspace root (typically HOME). Created on boot if missing. Undefined
+	 * preserves legacy behavior.
+	 */
+	defaultCloneRoot?: string;
 	/** Ms a session may sit without WS subscribers before the reaper disposes it. 0 disables. */
 	idleTimeoutMs: number;
 	/** Absolute path to the sqlite database file. */
 	dbPath: string;
 	/** Absolute path to the uploads root (images pasted into task bodies). */
 	uploadsRoot: string;
+	/**
+	 * The origin users actually reach this deck on, e.g. `https://deck.example.com`.
+	 *
+	 * Nothing about serving requests depends on it — the app is same-origin, so
+	 * the browser resolves `/api/...` correctly whatever the hostname. It exists
+	 * because the deck *talks about* URLs: onboarding text, the agent's own API
+	 * base, OAuth instructions, notification links. Without it every one of those
+	 * says `127.0.0.1`, which is right for a laptop and wrong for a server.
+	 */
+	publicUrl?: string;
 	/**
 	 * Prompt to fire automatically on every NEW session once a WS subscriber
 	 * attaches. Empty string or null disables. Default: "/start" (expands to the
@@ -48,6 +65,27 @@ export function splitList(value: string | undefined): string[] {
 		.filter(Boolean);
 }
 
+/**
+ * Normalize a configured public URL to a bare origin.
+ *
+ * Accepts what people actually type — `deck.example.com`, with or without a
+ * scheme, with or without a trailing slash — and returns `https://deck.example.com`.
+ * A bare hostname is assumed to be https: a deck published on a public hostname
+ * without TLS is a mistake, not a configuration we should quietly render into
+ * sign-in instructions.
+ */
+export function normalizePublicUrl(raw: string | undefined): string | undefined {
+	const value = raw?.trim();
+	if (!value) return undefined;
+	const withScheme = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+	try {
+		const url = new URL(withScheme);
+		return url.origin;
+	} catch {
+		return undefined;
+	}
+}
+
 function resolveWebDist(): string | undefined {
 	const explicit = process.env.OMP_DECK_WEB_DIST?.trim();
 	const candidates = [
@@ -73,6 +111,22 @@ export function loadConfig(): Config {
 	const extra = splitList(process.env.OMP_DECK_WORKSPACES);
 	const agentDir = process.env.OMP_AGENT_DIR?.trim() || undefined;
 	const webDist = resolveWebDist();
+	const cloneRootRaw = process.env.OMP_DECK_CLONE_ROOT?.trim();
+	const defaultCloneRoot = cloneRootRaw
+		? (() => {
+				// Expand a leading "~" or "~/" to the user's home directory; bail
+				// out of the expansion silently for other shells (e.g. "~user") —
+				// OS-native homedir handles the common case, and an exotic
+				// expansion that fails path.resolve() would only confuse the
+				// clone flow later.
+				const expanded = cloneRootRaw === "~" || cloneRootRaw.startsWith("~/")
+					? home + cloneRootRaw.slice(1)
+					: cloneRootRaw;
+				const resolved = path.resolve(expanded);
+				fs.mkdirSync(resolved, { recursive: true });
+				return resolved;
+			})()
+		: undefined;
 
 	return {
 		host: process.env.OMP_DECK_HOST?.trim() || "127.0.0.1",
@@ -82,6 +136,7 @@ export function loadConfig(): Config {
 		agentDir,
 		webDist,
 		devMode: process.env.NODE_ENV !== "production",
+		defaultCloneRoot,
 		// 5 minutes default. Set to 0 to disable reaping (kernels live until SIGINT).
 		idleTimeoutMs: parseInt10(process.env.OMP_DECK_IDLE_TIMEOUT_MS, 5 * 60_000),
 		dbPath: path.resolve(
@@ -105,5 +160,6 @@ export function loadConfig(): Config {
 		// Set OMP_DECK_AUTO_START="" or "0" to disable, or to any other prompt
 		// string to override the default "/start" slash-command invocation.
 		autoStartCommand: parseAutoStart(process.env.OMP_DECK_AUTO_START),
+		publicUrl: normalizePublicUrl(process.env.OMP_DECK_PUBLIC_URL),
 	};
 }

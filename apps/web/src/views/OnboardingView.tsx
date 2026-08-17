@@ -68,7 +68,11 @@ export function OnboardingView() {
 			if (skipped) {
 				localStorage.setItem("omp-deck:onboarding-skip-toast-pending", "1");
 			}
-			navigate("/");
+			// Overview is now `/`; chat moved to `/chat`. Onboarding
+			// used to land users on `/`, which used to be Chat —
+			// preserve that intent by sending them straight into Chat
+			// so the toast hint can surface there.
+			navigate("/chat");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		}

@@ -13,7 +13,7 @@ import {
 	SortableContext,
 	horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Settings2 } from "lucide-react";
+import { AlertCircle, Mic, Settings2 } from "lucide-react";
 
 import type { Task, TaskState } from "@omp-deck/protocol";
 
@@ -22,6 +22,8 @@ import { Column } from "@/components/tasks/Column";
 import { TaskCardBody } from "@/components/tasks/TaskCard";
 import { TaskModal } from "@/components/tasks/TaskModal";
 import { StateConfig } from "@/components/tasks/StateConfig";
+import { VoiceRecorder } from "@/components/VoiceRecorder";
+import { cn } from "@/lib/utils";
 import { tasksApi } from "@/lib/tasks-api";
 import { useStore } from "@/lib/store";
 
@@ -37,6 +39,14 @@ export function TasksView() {
 	const [states, setStates] = useState<TaskState[]>([]);
 	const [error, setError] = useState<string | undefined>();
 	const [loading, setLoading] = useState(true);
+	// Voice-driven create: pick target column (backlog/active/block/done),
+	// speak, server transcribes locally, single POST inserts the task.
+	// Errors stay visible until the next attempt or the user dismisses.
+	const [voiceStateId, setVoiceStateId] = useState<string | undefined>();
+	const [voiceTranscript, setVoiceTranscript] = useState<string | undefined>();
+	const [voiceBusy, setVoiceBusy] = useState(false);
+	const [voiceError, setVoiceError] = useState<string | undefined>();
+	const [voiceLanguage, setVoiceLanguage] = useState<string | undefined>();
 
 	const [openTask, setOpenTask] = useState<Task | undefined>();
 	const [showStateConfig, setShowStateConfig] = useState(false);
@@ -107,6 +117,39 @@ export function TasksView() {
 			setError(String(e));
 		}
 	}
+
+	const handleVoiceTranscript = useCallback(
+		async (text: string, language: string): Promise<void> => {
+			const trimmed = text.trim();
+			setVoiceTranscript(trimmed);
+			setVoiceLanguage(language);
+			if (!trimmed) {
+				setVoiceError("transcript was empty");
+				return;
+			}
+			// Default to the first column if the user hasn't picked one yet.
+			const target = voiceStateId ?? states[0]?.id;
+			if (!target) {
+				setVoiceError("no columns configured — open the column editor first");
+				return;
+			}
+			setVoiceBusy(true);
+			setVoiceError(undefined);
+			try {
+				const created = await tasksApi.create({ title: trimmed, stateId: target });
+				setTasks((prev) => [...prev, created]);
+			} catch (e) {
+				setVoiceError(`create failed: ${e instanceof Error ? e.message : String(e)}`);
+			} finally {
+				setVoiceBusy(false);
+			}
+		},
+		[voiceStateId, states],
+	);
+
+	const handleVoiceError = useCallback((msg: string): void => {
+		setVoiceError(msg);
+	}, []);
 
 	function onDragStart(ev: DragStartEvent): void {
 		const dragType = ev.active.data.current?.type as string | undefined;
@@ -263,7 +306,7 @@ export function TasksView() {
 		setPendingDraft({
 			text: `# ${task.title}\n\n${task.body}`.trim(),
 		});
-		navigate("/");
+		navigate("/chat");
 	}
 
 	return (
@@ -277,13 +320,37 @@ export function TasksView() {
 							<div className="text-xs text-ink-3">
 								{tasks.length} task{tasks.length === 1 ? "" : "s"} · {states.length} columns
 							</div>
+							<label className="ml-auto inline-flex items-center gap-1 font-mono text-2xs uppercase tracking-meta text-ink-3">
+								<Mic className="h-3 w-3" />
+								<span>voice →</span>
+								<select
+									aria-label="Voice target column"
+									title="Column new voice tasks land in"
+									value={voiceStateId ?? states[0]?.id ?? ""}
+									onChange={(e) => setVoiceStateId(e.target.value || undefined)}
+									disabled={states.length === 0 || voiceBusy}
+									className="h-7 rounded-md border border-line bg-paper-2 px-1 text-2xs text-ink-2 focus:outline-none disabled:opacity-60"
+								>
+									{states.map((s) => (
+										<option key={s.id} value={s.id}>
+											{s.name}
+										</option>
+									))}
+								</select>
+							</label>
+							<VoiceRecorder
+								disabled={states.length === 0 || voiceBusy}
+								onTranscribe={(text, language) => void handleVoiceTranscript(text, language)}
+								onError={handleVoiceError}
+							/>
 							<button
 								type="button"
 								onClick={() => {
 									setShowStateConfig((v) => !v);
 									setInspectorOpen(true);
 								}}
-								className="btn-ghost ml-auto h-7 px-2 text-xs"
+								data-tooltip-key="kanban.columns-edit"
+								className="btn-ghost h-7 px-2 text-xs"
 								title="Edit columns"
 							>
 								<Settings2 className="h-3.5 w-3.5" />
@@ -291,6 +358,45 @@ export function TasksView() {
 							</button>
 						</div>
 
+						{(voiceTranscript || voiceError || voiceBusy) ? (
+							<div
+								className={cn(
+									"flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 font-mono text-2xs",
+									voiceError ? "bg-danger/10 text-danger" : "bg-paper-2 text-ink-2",
+								)}
+							>
+								<span className="uppercase tracking-meta text-ink-3">voice</span>
+								{voiceBusy ? (
+									<span>transcribing &amp; posting…</span>
+								) : null}
+								{voiceError ? (
+									<span className="inline-flex items-center gap-1">
+										<AlertCircle className="h-3 w-3" />
+										{voiceError}
+									</span>
+								) : null}
+								{voiceTranscript ? (
+									<span className="max-w-[60ch] truncate" title={voiceTranscript}>
+										{voiceTranscript}
+									</span>
+								) : null}
+								{voiceLanguage ? (
+									<span className="text-ink-3">[{voiceLanguage}]</span>
+								) : null}
+								<button
+									type="button"
+									onClick={() => {
+										setVoiceTranscript(undefined);
+										setVoiceError(undefined);
+										setVoiceLanguage(undefined);
+									}}
+									className="ml-auto text-ink-3 hover:text-ink"
+									title="Clear voice transcript banner"
+								>
+									dismiss
+								</button>
+							</div>
+						) : null}
 						{error ? (
 							<div className="border-b border-line bg-danger/10 px-3 py-1 font-mono text-xs text-danger">
 								{error}

@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { createBrowserRouter, Outlet, RouterProvider, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, lazy, useEffect, useRef } from "react";
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useNavigate } from "react-router-dom";
 import { ChatView } from "./views/ChatView";
 import { TasksView } from "./views/TasksView";
 import { RoutinesView } from "./views/RoutinesView";
@@ -11,7 +11,42 @@ import { SkillsView } from "./views/SkillsView";
 import { SettingsView } from "./views/SettingsView";
 import { IntegrationsView } from "./views/IntegrationsView";
 import { OnboardingView } from "./views/OnboardingView";
+import { WorkflowsView } from "./views/WorkflowsView";
+import { GholamView } from "./views/GholamView";
+import { GholamChats } from "./views/GholamChats";
+import { GholamChatView } from "./views/GholamChat";
+import { GholamChatNew } from "./views/GholamChatNew";
+import { PromptsLibrary } from "./views/PromptsLibrary";
+import { PromptsDiscover } from "./views/PromptsDiscover";
+import { PromptsShare } from "./views/PromptsShare";
+import { PreviewView } from "./views/PreviewView";
+import { StudioView } from "./views/StudioView";
+import { StorefrontHome } from "./views/storefront/StorefrontHome";
+import { StorefrontSection } from "./views/storefront/StorefrontSection";
+import { StorefrontDetail } from "./views/storefront/StorefrontDetail";
+import { StorefrontSearch } from "./views/storefront/StorefrontSearch";
+import { OverviewView } from "./views/OverviewView";
+import { ReceiptsView } from "./views/ReceiptsView";
 import { onboardingApi } from "./lib/onboarding-api";
+import { ShellView } from "./views/ShellView";
+
+/**
+ * Explorer and Agent Config pull in CodeMirror (~600KB minified) for the code
+ * editor and diff viewer. Neither is needed to open the app and chat — the
+ * common case, especially on the mobile PWA where every extra kilobyte of
+ * initial JS is a slower first paint on a cellular connection — so both are
+ * code-split behind React.lazy rather than bundled into the main chunk.
+ */
+const ExplorerView = lazy(() => import("./views/ExplorerView").then((m) => ({ default: m.ExplorerView })));
+const AgentConfigView = lazy(() => import("./views/AgentConfigView").then((m) => ({ default: m.AgentConfigView })));
+
+function LazyViewFallback() {
+	return (
+		<div className="flex h-full w-full items-center justify-center bg-paper">
+			<div className="font-mono text-2xs text-ink-3">Loading…</div>
+		</div>
+	);
+}
 
 /**
  * First-paint redirect: if the server reports `needsOnboarding`, route
@@ -45,17 +80,69 @@ const router = createBrowserRouter([
 	{
 		element: <OnboardingGate />,
 		children: [
-			{ path: "/", element: <ChatView /> },
+			{ path: "/", element: <OverviewView /> },
+			{ path: "/receipts", element: <ReceiptsView /> },
+			{ path: "/chat", element: <ChatView /> },
+			{
+				path: "/explorer",
+				element: (
+					<Suspense fallback={<LazyViewFallback />}>
+						<ExplorerView />
+					</Suspense>
+				),
+			},
+			{
+				path: "/agent-config",
+				element: (
+					<Suspense fallback={<LazyViewFallback />}>
+						<AgentConfigView />
+					</Suspense>
+				),
+			},
 			{ path: "/tasks", element: <TasksView /> },
+			{ path: "/shell", element: <ShellView /> },
 			{ path: "/routines", element: <RoutinesView /> },
+			{ path: "/workflows", element: <WorkflowsView /> },
+			{ path: "/gholam", element: <GholamView /> },
+			{ path: "/gholam/chats", element: <Navigate to="/gholam?tab=chats" replace /> },
+			{ path: "/gholam/chat/new", element: <GholamChatNew /> },
+			{ path: "/gholam/chat/:chatId", element: <GholamChatView /> },
 			{ path: "/routines/:id/runs/:runId", element: <RunDetailView /> },
 			{ path: "/inbox", element: <InboxView /> },
 			{ path: "/marketplace", element: <MarketplaceView /> },
 			{ path: "/skills", element: <SkillsView /> },
+			{ path: "/prompts/library", element: <PromptsLibrary /> },
+			{ path: "/prompts/discover", element: <PromptsDiscover /> },
+			// Alias so the Discover tab in the nav rail and any incoming
+			// /discover deep-links resolve to the canonical PromptsDiscover
+			// view without spawning a second panel.
+			{ path: "/discover", element: <Navigate to="/prompts/discover" replace /> },
+			{ path: "/prompts/share/:slug", element: <PromptsShare /> },
 			{ path: "/kb", element: <KbView /> },
 			{ path: "/integrations", element: <IntegrationsView /> },
 			{ path: "/settings", element: <SettingsView /> },
 			{ path: "/onboarding", element: <OnboardingView /> },
+			// §3 + §4 of docs/GENERATIVE.md — pre-update preview + studio shell.
+			// /studio (no pane) is the 3-col grid; /studio/:pane focuses on a single pane.
+			// Worker J (Studio) owns these routes; do not move.
+			//
+			// A single nested route is required because having two sibling entries
+			// with paths `/studio` and `/studio/:pane` makes react-router throw
+			// "absolute route path '/studio/*' has duplicate param-less route" —
+			// which silently breaks navigation for every other route in the file.
+			{
+				path: "/studio",
+				element: <StudioView />,
+				children: [
+					{ path: ":pane", element: <StudioView /> },
+				],
+			},
+			{ path: "/preview/:route", element: <PreviewView /> },
+			// Storefront (§1 of docs/STOREFRONT.md) — discovery, sections, detail.
+			{ path: "/storefront", element: <StorefrontHome /> },
+			{ path: "/storefront/search", element: <StorefrontSearch /> },
+			{ path: "/storefront/:section", element: <StorefrontSection /> },
+			{ path: "/storefront/:section/:id", element: <StorefrontDetail /> },
 		],
 	},
 ]);

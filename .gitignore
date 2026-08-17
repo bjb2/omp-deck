@@ -16,21 +16,36 @@ dist
 # Build artifacts
 apps/*/dist
 apps/web/dist-server
+apps/*/native
 .next
+
+# Drizzle Kit generated output (migrations + meta snapshots).
+# Hand-authored SQL lives in apps/server/src/db/migrations and stays tracked;
+# these are the folders drizzle-kit writes when it is run from a package root.
+drizzle/
+apps/*/drizzle/
 
 # Editor
 .vscode
 .idea
 *.swp
-# Runtime + deck-managed data
+# Runtime + deck-managed data. The repo-root /data/ dir is NOT source — it
+# appears when a probe run points OMP_DECK_DATA_DIR at the repo root and drops
+# a stray deck.db there; data-shell-probe/ is the same kind of session scratch
+# (it holds a persisted deck api-token and must never be committed).
 apps/server/data
 apps/server/data/*.db
 apps/server/data/*.db-shm
 apps/server/data/*.db-wal
 apps/server/dist-server
 apps/bridges/*/dist
+/data/
+/data-shell-probe/
 
 # Smoke / spawn helpers and captured logs
+__probe__.txt
+raw-full.txt
+/qr-*.svg
 .logs
 .deck-data
 orgd-stdout.log
@@ -40,6 +55,7 @@ server.err.log
 server.out.log
 
 # Local config the deck or bridges may write
+WATCHDOG.yml
 .env.*
 !.env.example
 
@@ -58,3 +74,14 @@ apps/server/src/templates/paper-trading-*.yaml
 # Local convenience scripts. Start-OMP-Deck.cmd ships with the template;
 # personal helpers like Restart-OMP-Deck.cmd stay out of the public repo.
 Restart-OMP-Deck.cmd
+
+# Agent runtime state. `agent-defaults/` holds the seed for the agent directory
+# and is public; these are the files that must never join it — the SDK auth
+# database (OAuth refresh tokens), model/QA caches, and any rendered config that
+# had its ${VAR} placeholders filled in with real credentials.
+agent-defaults/**/*.db
+agent-defaults/mcp.json
+agent-defaults/models.yml
+# PowerShell-bash glob expansion occasionally surfaces the user's home directory
+# (C:\Users\PC\) as `~/` from inside a repo. Keep it out of the index.
+~/

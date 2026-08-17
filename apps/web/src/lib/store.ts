@@ -1,9 +1,22 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-
 import type {
+	AiMeta,
+	DeployState,
 	ExtUiDialogResponse,
+	GholamChat,
+	GholamChatMessageWire,
+	GholamChatState,
+	ListMcpToolsResponse,
+	McpHealthResponse,
+	McpHealthStatus,
+	McpToolSpec,
+	Prompt,
+	SessionImportance,
+	PromptRecommendation,
 	ListSessionsResponse,
+	SessionStatus,
+	SessionUrgency,
 	ListWorkspacesResponse,
 	NotificationLevel,
 	PendingPlanApprovalWire,
@@ -36,7 +49,7 @@ export interface NotificationItem {
 const MAX_NOTIFICATIONS = 50;
 
 import { api } from "./api";
-import { applyEvent, initSession } from "./reducer";
+import { applyEvent, initSession, initSessionWithMeta } from "./reducer";
 import type { SessionUi } from "./types";
 import { WsClient, type WsStatus } from "./ws";
 
@@ -63,6 +76,18 @@ function readChromeOpen(key: string, desktopFallback: boolean): boolean {
 	return readBool(key, desktopFallback);
 }
 
+/** Per-chat record kept in the store. Same shape as `GholamChat`, tracked
+ *  here so the reducer can splice updates on every broadcast without
+ *  re-fetching the list. */
+type GholamChatRecord = GholamChat;
+
+interface ModelUsageRow {
+	model: string;
+	costMicrocents: number;
+	tokensIn: number;
+	tokensOut: number;
+}
+
 interface StoreState {
 	ws: WsClient | null;
 	wsStatus: WsStatus;
@@ -77,6 +102,13 @@ interface StoreState {
 
 	// Track subscriptions to avoid duplicate subscribe messages.
 	subscribed: Set<string>;
+
+	/**
+	 * Session ids the user has manually renamed via the chat header. The
+	 * server skips `setName()` for these when an AI regenerate arrives, so
+	 * the user's title is never silently overwritten.
+	 */
+	userRenamed: Set<string>;
 
 	/**
 	 * Tool-card view state. `allCollapsed` is the bulk default; `perCard` holds
@@ -153,13 +185,78 @@ interface StoreState {
 	 */
 	notifications: NotificationItem[];
 
+	/**
+	 * Latest deploy_state the server has broadcast. Null until the first
+	 * frame arrives. The DeployStatusBadge reads this; the routines runner
+	 * and gholam sidecar emit it.
+	 */
+	deployState: DeployState | null;
+
+	/**
+	 * Realtime storefront pulse. `byId` mirrors the last `store_item_added`
+	 * insertion (epoch-ms) so any view can render an entry-glow without
+	 * subscribing to the WS bus directly; `counter` is bumped on every
+	 * `store_item_added` / `store_item_updated` / `store_item_removed` /
+	 * `discovery_added` frame as a "something changed, refetch" signal —
+	 * same shape as `tasksChangeCounter` / `skillsChangeCounter`.
+	 */
+	storefrontPulse: { byId: Record<string, number>; counter: number };
+
+	/**
+	 * Latest MCP health snapshot merged from successive `mcp_health` frames.
+	 * The server emits one frame per server after each probe; we union by
+	 * `McpHealthStatus.id` and stamp `lastReceivedAtMs` so the strip can
+	 * mark itself stale after 60s without a frame.
+	 */
+	mcpHealth: { response: McpHealthResponse | null; lastReceivedAtMs: number | null };
+	/**
+	 * Per-server cache of `GET /api/mcp/:name/tools`. Populated by
+	 * `fetchMcpTools` (used by the chrome popover + /integrations), evicted
+	 * on `mcp_tools_changed` frames so a toggle re-fetches fresh state.
+	 */
+	mcpToolsByName: Record<string, { tools: McpToolSpec[]; disabledTools: string[]; fetchedAt: number }>;
+	/** Bumped on every `mcp_tools_changed` server frame so popovers re-fetch. */
+	mcpToolsChangeCounter: number;
+
+	/**
+	 * Cached prompt library for the active user. Mirrors the server-side
+	 * `~/.omp-deck/prompts/` tree; views (`PromptsLibrary`,
+	 * `PromptsDiscover`) hydrate from `promptsApi.list()` and mutate via
+	 * the same API. Cleared on logout / reconnect.
+	 */
+	promptsLibrary: Prompt[];
+	/**
+	 * Latest recommendation payload from `GET /api/prompts/recommend`.
+	 * Re-fetched by `<PromptSuggestions />` on mount + every 60s while
+	 * the composer sits empty; never broadcast (each tab is best served
+	 * by its own fetch — the corpus is small).
+	 */
+	promptsRecommendations: PromptRecommendation[];
+
+	// ─── Persistent Gholam chat (§1 of docs/GENERATIVE.md) ────────────────
+	/** Last fetch of chat history — list view hydrates from here. */
+	gholamChats: Record<string, GholamChatRecord>;
+	/** Selected chat for the chat-thread surface. */
+	activeChatId?: string;
+	/** Live message buffer. Flat per-chat map of `seq → wire shape`. */
+	gholamChatMessages: Record<string, GholamChatMessageWire[]>;
+	/** Selected model for the composer; mirrored from
+	 *  `localStorage["omp-deck:model-selection"]`. */
+	modelSelection?: { provider: string; id: string };
+	/** Per-model daily usage for the inspector pane. Rolling sum; v1
+	 *  accumulates in-memory only (persisted scope TBD). */
+	modelUsage: Record<string, ModelUsageRow>;
+	/** Bump on `gholam_chat_state`/`gholam_chat_message`/`gholam_chat_usage`
+	 *  so list-view components can refetch on demand. */
+	gholamChatChangeCounter: number;
+
 	// ─── Actions ─────────────────────────────────────────────────────────
 	bootstrap(): Promise<void>;
 	connect(): void;
 	disconnect(): void;
 	refreshWorkspaces(): Promise<void>;
 	refreshSessions(cwd?: string): Promise<void>;
-	createSession(opts: { cwd: string; resumeFromPath?: string }): Promise<string>;
+	createSession(opts: { cwd: string; resumeFromPath?: string; repoId?: string; worktreeBranch?: string }): Promise<string>;
 	selectSession(id: string): void;
 	sendPrompt(text: string, images?: import("@omp-deck/protocol").ImageAttachment[]): void;
 	abort(): void;
@@ -174,6 +271,22 @@ interface StoreState {
 	editQueued(queuedId: string, text: string, images?: import("@omp-deck/protocol").ImageAttachment[]): void;
 	disposeSession(id: string): Promise<void>;
 	renameSession(id: string, name: string): Promise<void>;
+	/**
+	 * Server-side AI metadata regen. Returns the full `AiMeta` bag so the
+	 * caller can apply it (the sidebar patch is already mirrored into
+	 * `sessionsById` and `sessions` before this resolves).
+	 */
+	regenerateSessionAiMeta(id: string, opts?: { force?: boolean }): Promise<AiMeta>;
+	setSessionUrgency(id: string, urgency: SessionUrgency): Promise<void>;
+	setSessionImportance(id: string, importance: SessionImportance): Promise<void>;
+	archiveSession(id: string): Promise<void>;
+	unarchiveSession(id: string): Promise<void>;
+	/** Hard-delete a session: dispose the live handle if any AND drop the
+	 *  persisted meta row. The server handles both via DELETE /sessions/:id.
+	 *  The caller is responsible for showing a confirmation prompt. */
+	deleteSession(id: string): Promise<void>;
+	/** Mark a session id as user-renamed so AI regenerates skip setName. */
+	markSessionUserRenamed(id: string): void;
 	toggleAllToolCards(): void;
 	setToolCardOpen(id: string, open: boolean): void;
 	setPendingDraft(draft: { text: string } | undefined): void;
@@ -203,6 +316,44 @@ interface StoreState {
 	markNotificationDelivered(id: string): void;
 	/** Hide an in-app toast for a notification (does not affect an already-delivered OS notif). */
 	dismissNotification(id: string): void;
+	/** Replace the cached prompt library (e.g. after create/edit/delete). */
+	setPromptsLibrary(prompts: Prompt[]): void;
+	/** Bump usage counter locally + ping `/use` endpoint so the server records it. */
+	promptUsageBump(promptId: string): void;
+	/** Cache the latest recommendation payload from `<PromptSuggestions />`. */
+	setPromptRecommendations(recs: PromptRecommendation[]): void;
+	// ─── Gholam chat actions ───────────────────────────────────────────
+	hydrateGholamChats(chats: GholamChat[]): void;
+	upsertGholamChat(chat: GholamChat): void;
+	removeGholamChat(id: string): void;
+	setActiveChatId(id?: string): void;
+	appendGholamChatMessage(message: GholamChatMessageWire): void;
+	setGholamChatState(chatId: string, state: GholamChatState, usage?: GholamChat["usage"]): void;
+	recordModelUsage(model: string, usage: GholamChat["usage"]): void;
+	setModelSelection(sel: { provider: string; id: string }): void;
+	/** Drop the cached mcp_health when no frame has arrived for 60s. */
+	markMcpHealthStale(): void;
+
+	/** Cache `GET /api/mcp/:name/tools` so the popover opens without a
+	 *  round-trip when reopened within the 30s window. */
+	cacheMcpTools(name: string, payload: ListMcpToolsResponse): void;
+
+	/** Optimistic enable/disable write so the chrome chip + studio row
+	 *  reflect the action immediately, without waiting for the next
+	 *  `mcp_health` frame. */
+	setMcpServerEnabled(name: string, enabled: boolean): void;
+
+	/** Drop a server from the cached health snapshot. */
+	removeMcpServer(name: string): void;
+	/**
+	 * Pin a single active "focus" session — drives the Overview hero timer and
+	 * the Focus button on task cards. `focusStartedAtMs` is stamped on set so
+	 * the timer survives remounts without re-reading `Date.now()`. Both reset
+	 * to `null` on `setFocusSession(null)` (Clear Focus button).
+	 */
+	focusSessionId: string | null;
+	focusStartedAtMs: number | null;
+	setFocusSession(id: string | null): void;
 }
 
 export const useStore = create<StoreState>()(
@@ -213,7 +364,9 @@ export const useStore = create<StoreState>()(
 		defaultCwd: "",
 		sessions: [],
 		sessionsById: {},
+		activeId: readLastSession(),
 		subscribed: new Set<string>(),
+		userRenamed: new Set<string>(),
 		toolView: { allCollapsed: false, perCard: {} },
 		tasksChangeCounter: 0,
 		skillsChangeCounter: 0,
@@ -221,11 +374,28 @@ export const useStore = create<StoreState>()(
 		pendingDialogs: {},
 		heartbeat: null,
 		notifications: [],
+		deployState: null,
+		storefrontPulse: { byId: {}, counter: 0 },
+		mcpHealth: { response: null, lastReceivedAtMs: null },
+	mcpToolsByName: {},
+	mcpToolsChangeCounter: 0,
+		promptsLibrary: [],
+		promptsRecommendations: [],
+		// Persistent Gholam chat state (§1).
+		gholamChats: {},
+		gholamChatMessages: {},
+		modelUsage: {},
+		modelSelection: readModelSelection(),
+		gholamChatChangeCounter: 0,
 		// Hydrate chrome state from localStorage at module init so first render
 		// matches the user's last preference — but only on desktop. On mobile the
 		// panels are overlay drawers and always start closed.
 		sidebarOpen: readChromeOpen("omp-deck:sidebar-open", true),
 		inspectorOpen: readChromeOpen("omp-deck:inspector-open", false),
+		// Active focus session — null until the user starts focusing on a task.
+		// Both fields reset together via setFocusSession(null).
+		focusSessionId: null,
+		focusStartedAtMs: null,
 
 		async bootstrap() {
 			get().connect();
@@ -259,8 +429,24 @@ export const useStore = create<StoreState>()(
 			try {
 				const resp: ListSessionsResponse = await api.listSessions(cwd);
 				set({ sessions: resp.sessions });
+				// A restored `activeId` (from a previous tab) is only usable
+				// while that session still exists server-side; otherwise the
+				// composer would stay wired to a dead id and silently drop
+				// prompts. Re-select it now that the list is known.
+				const restored = get().activeId;
+				if (restored && resp.sessions.some((s) => s.id === restored)) {
+					get().selectSession(restored);
+				} else if (restored) {
+					set({ activeId: undefined });
+					writeLastSession(undefined);
+				}
 			} catch (err) {
 				console.warn("listSessions failed", err);
+				// Offline / server restarting: keep the restored `activeId`
+				// so the composer stays usable and the draft keeps saving.
+				// The WS `connect` path re-subscribes once the socket is back.
+				const restored = get().activeId;
+				if (restored) get().selectSession(restored);
 			}
 		},
 
@@ -268,11 +454,14 @@ export const useStore = create<StoreState>()(
 			const created = await api.createSession({
 				cwd: opts.cwd,
 				...(opts.resumeFromPath ? { resumeFromPath: opts.resumeFromPath } : {}),
+				...(opts.repoId ? { repoId: opts.repoId } : {}),
+				...(opts.worktreeBranch ? { worktreeBranch: opts.worktreeBranch } : {}),
 			});
 			// Subscribe immediately; reducer will hydrate from the `subscribed` snapshot.
 			get().ws?.send({ type: "subscribe", sessionId: created.sessionId });
 			get().subscribed.add(created.sessionId);
 			set({ activeId: created.sessionId });
+			writeLastSession(created.sessionId);
 			// Background-refresh sidebar to reflect the new entry.
 			void get().refreshSessions();
 			void get().refreshWorkspaces();
@@ -281,6 +470,7 @@ export const useStore = create<StoreState>()(
 
 		selectSession(id: string) {
 			set({ activeId: id });
+			writeLastSession(id);
 			if (!get().subscribed.has(id)) {
 				get().ws?.send({ type: "subscribe", sessionId: id });
 				get().subscribed.add(id);
@@ -353,6 +543,118 @@ export const useStore = create<StoreState>()(
 					: s.sessionsById;
 				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, title: name } : r));
 				return { sessionsById: next, sessions };
+			});
+		},
+		async regenerateSessionAiMeta(id, opts) {
+			const resp = await api.regenerateSessionMeta(id, opts ?? {});
+			const meta = resp.meta;
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const now = new Date().toISOString();
+				const nextUi = ui
+					? {
+							...ui,
+							sessionAiTitle: meta.title,
+							aiMeta: meta,
+							meta: {
+								...ui.meta,
+								aiSummary: meta.summary,
+								aiTags: meta.tags,
+								aiGeneratedAt: now,
+								// AI-suggested dials are surfaced so the sidebar can
+								// render them, but only applied if the user hasn't
+								// already chosen a different value via setSession*().
+								urgency: ui.meta?.urgency ?? meta.urgency,
+								importance: ui.meta?.importance ?? meta.importance,
+							},
+						}
+					: ui;
+				const sessions = s.sessions.map((r) => (r.id === id
+					? { ...r, aiSummary: meta.summary, aiTags: meta.tags, aiGeneratedAt: now }
+					: r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+			return meta;
+		},
+		async setSessionUrgency(id, urgency) {
+			await api.patchSessionMeta(id, { urgency });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, urgency } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, urgency } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async setSessionImportance(id, importance) {
+			await api.patchSessionMeta(id, { importance });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, importance } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, importance } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async archiveSession(id) {
+			await api.patchSessionMeta(id, { archived: true });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, archived: true } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, archived: true } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async unarchiveSession(id) {
+			await api.patchSessionMeta(id, { archived: false });
+			set((s) => {
+				const ui = s.sessionsById[id];
+				const nextUi = ui ? { ...ui, meta: { ...ui.meta, archived: false } } : ui;
+				const sessions = s.sessions.map((r) => (r.id === id ? { ...r, archived: false } : r));
+				return {
+					sessionsById: nextUi ? { ...s.sessionsById, [id]: nextUi } : s.sessionsById,
+					sessions,
+				};
+			});
+		},
+		async deleteSession(id) {
+			try {
+				await api.disposeSession(id);
+			} catch (err) {
+				// Surface the failure to the caller via a re-throw but still
+				// keep the local store consistent: a 404 here means the
+				// session was already gone server-side, which is fine.
+				const msg = String((err as Error).message ?? err);
+				if (!msg.includes("HTTP 404")) throw err;
+			}
+			set((s) => {
+				const nextById = { ...s.sessionsById };
+				delete nextById[id];
+				const nextSessions = s.sessions.filter((r) => r.id !== id);
+				const nextActive = s.activeId === id ? undefined : s.activeId;
+				return {
+					sessionsById: nextById,
+					sessions: nextSessions,
+					activeId: nextActive,
+				};
+			});
+		},
+		markSessionUserRenamed(id) {
+			set((s) => {
+				if (s.userRenamed.has(id)) return {};
+				const next = new Set(s.userRenamed);
+				next.add(id);
+				return { userRenamed: next };
 			});
 		},
 
@@ -470,6 +772,195 @@ export const useStore = create<StoreState>()(
 				return { notifications: next };
 			});
 		},
+
+	setPromptsLibrary(prompts) {
+		set({ promptsLibrary: prompts });
+		},
+
+	promptUsageBump(promptId) {
+		// Optimistic local bump so the sidebar "recently used" re-ranks without
+		// waiting for a refetch. Fire-and-forget the server call — failure is
+		// logged but not surfaced (the server reconciles via the next list).
+			set((s) => {
+			const next = s.promptsLibrary.map((p) =>
+				p.id === promptId
+					? { ...p, usageCount: p.usageCount + 1, lastUsedAt: new Date().toISOString() }
+					: p,
+);
+			return { promptsLibrary: next };
+			});
+		void fetch(`/api/prompts/library/${encodeURIComponent(promptId)}/use`, {
+			method: "POST",
+		}).catch(() => {});
+		},
+
+	setPromptRecommendations(recs) {
+		set({ promptsRecommendations: recs });
+		},
+
+	hydrateGholamChats(chats) {
+		const next: Record<string, GholamChatRecord> = {};
+		for (const c of chats) next[c.id] = c;
+		set({ gholamChats: next });
+		},
+
+	upsertGholamChat(chat) {
+		set((s) => ({
+			gholamChats: { ...s.gholamChats, [chat.id]: chat },
+			gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+		}));
+		},
+
+	removeGholamChat(id) {
+		set((s) => {
+			const next = { ...s.gholamChats };
+			delete next[id];
+			const nextMsgs = { ...s.gholamChatMessages };
+			delete nextMsgs[id];
+			return {
+				gholamChats: next,
+				gholamChatMessages: nextMsgs,
+				activeChatId: s.activeChatId === id ? undefined : s.activeChatId,
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+		},
+
+	setActiveChatId(id) {
+		set({ activeChatId: id });
+		},
+
+	appendGholamChatMessage(message) {
+		set((s) => {
+			const list = s.gholamChatMessages[message.chatId] ?? [];
+			if (list.some((m) => m.id === message.id)) return {};
+			const next = [...list, message].sort((a, b) => a.seq - b.seq);
+			return {
+				gholamChatMessages: { ...s.gholamChatMessages, [message.chatId]: next },
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+		},
+
+	setGholamChatState(chatId, state, usage) {
+		set((s) => {
+			const existing = s.gholamChats[chatId];
+			const updated: GholamChatRecord = existing
+				? { ...existing, state, updatedAt: new Date().toISOString(), usage: usage ?? existing.usage }
+				: {
+						id: chatId,
+						title: "(loading)",
+						kind: "user",
+						cwd: "",
+						state,
+						usage: usage ?? { tokensIn: 0, tokensOut: 0, costMicrocents: 0 },
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					};
+			return {
+				gholamChats: { ...s.gholamChats, [chatId]: updated },
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+		},
+
+	recordModelUsage(model, usage) {
+		set((s) => {
+			const existing = s.modelUsage[model] ?? { model, costMicrocents: 0, tokensIn: 0, tokensOut: 0 };
+			const updated = {
+				model,
+				costMicrocents: existing.costMicrocents + usage.costMicrocents,
+				tokensIn: existing.tokensIn + usage.tokensIn,
+				tokensOut: existing.tokensOut + usage.tokensOut,
+			};
+			return { modelUsage: { ...s.modelUsage, [model]: updated } };
+		});
+		},
+
+	setModelSelection(sel) {
+		try {
+			localStorage.setItem("omp-deck:model-selection", JSON.stringify(sel));
+		} catch {
+			/* ignore — localStorage quota or sandbox */
+		}
+		set({ modelSelection: sel });
+		},
+
+	markMcpHealthStale() {
+		set({ mcpHealth: { response: null, lastReceivedAtMs: null } });
+	},
+
+	/**
+	 * Idempotent cache write used by `fetchMcpTools`. Stores the tools
+	 * list + the server's disabledTools[] so the popover can render
+	 * without re-fetching when reopened within the 30s window.
+	 */
+	cacheMcpTools(name: string, payload: ListMcpToolsResponse): void {
+		set((s) => ({
+			mcpToolsByName: {
+				...s.mcpToolsByName,
+				[name]: {
+					tools: payload.tools,
+					disabledTools: payload.disabledTools,
+					fetchedAt: Date.now(),
+				},
+			},
+		}));
+	},
+
+	/**
+	 * Optimistic enable/disable write so the chrome chip + studio row
+	 * reflect the action immediately, without waiting for the next
+	 * `mcp_health` frame. The reducer that handles `mcp_tools_changed`
+	 * still drops the cached entry so the next popover open re-fetches.
+	 */
+	setMcpServerEnabled(name: string, enabled: boolean): void {
+		set((s) => {
+			const response = s.mcpHealth.response;
+			if (!response) return {};
+			let touched = false;
+			const status = response.status.map((row) => {
+				if (row.name !== name) return row;
+				touched = true;
+				return {
+					...row,
+					state: enabled ? ("healthy" as const) : ("disabled" as const),
+					lastLatencyMs: enabled ? row.lastLatencyMs : null,
+				};
+			});
+			if (!touched) return {};
+			return { mcpHealth: { ...s.mcpHealth, response: { ...response, status } } };
+		});
+	},
+
+	removeMcpServer(name: string): void {
+		set((s) => {
+			const response = s.mcpHealth.response;
+			const tools = { ...s.mcpToolsByName };
+			delete tools[name];
+			if (!response) return { mcpToolsByName: tools };
+			return {
+				mcpHealth: {
+					...s.mcpHealth,
+					response: {
+						...response,
+						status: response.status.filter((row) => row.name !== name),
+					},
+				},
+				mcpToolsByName: tools,
+			};
+		});
+	},
+
+	setFocusSession(id) {
+		// Stamping `Date.now()` at the moment of set keeps the Overview timer
+		// stable across re-renders; the timer reads `Date.now() - focusStartedAtMs`
+		// inside a 1s interval and never needs to be told when focus began.
+		set({
+			focusSessionId: id,
+			focusStartedAtMs: id === null ? null : Date.now(),
+		});
+	},
 	})),
 );
 
@@ -488,12 +979,25 @@ function handleFrame(
 			return;
 
 		case "subscribed":
-			set((s) => ({
-				sessionsById: {
-					...s.sessionsById,
-					[frame.sessionId]: initSession(frame.snapshot),
-				},
-			}));
+			set((s) => {
+				const summary = s.sessions.find((r) => r.id === frame.sessionId);
+				const baseMeta = summary
+					? {
+							urgency: summary.urgency,
+							importance: summary.importance,
+							archived: summary.archived,
+							aiSummary: summary.aiSummary,
+							aiTags: summary.aiTags,
+							aiGeneratedAt: summary.aiGeneratedAt,
+						}
+					: undefined;
+				return {
+					sessionsById: {
+						...s.sessionsById,
+						[frame.sessionId]: initSessionWithMeta(frame.snapshot, baseMeta),
+					},
+				};
+			});
 			return;
 
 		case "unsubscribed":
@@ -661,9 +1165,244 @@ function handleFrame(
 		case "pong":
 		default:
 			return;
+
+	case "deploy_state":
+		set((s) => {
+			if (s.deployState && s.deployState.updatedAt === frame.state.updatedAt) return {};
+			return { deployState: frame.state };
+		});
+			return;
+
+	case "reload_available":
+		// Server has a new bundle. Soft-reload by navigating with a cache
+		// buster; the WS will auto-reconnect within the backoff window
+		// so the user's session and composer drafts survive.
+		if (typeof window !== "undefined") {
+			const url = new URL(window.location.href);
+			if (url.searchParams.get("v") !== frame.bundleHash) {
+				url.searchParams.set("v", frame.bundleHash);
+				window.location.assign(url.toString());
 	}
+	}
+			return;
+
+	case "gholam_chat_state":
+		set((s) => {
+			const existing = s.gholamChats[frame.chatId];
+			const nextUsage = frame.usage ?? existing?.usage ?? { tokensIn: 0, tokensOut: 0, costMicrocents: 0 };
+			const updated: GholamChatRecord = existing
+				? { ...existing, state: frame.state, updatedAt: new Date().toISOString(), usage: nextUsage }
+				: {
+						id: frame.chatId,
+						title: "(loading)",
+						kind: "user",
+						cwd: "",
+						state: frame.state,
+						usage: nextUsage,
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					};
+			return {
+				gholamChats: { ...s.gholamChats, [frame.chatId]: updated },
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+			return;
+
+	case "gholam_chat_message": {
+		set((s) => {
+			const list = s.gholamChatMessages[frame.chatId] ?? [];
+			if (list.some((m) => m.id === frame.message.id)) return {};
+			const nextList = [...list, frame.message].sort((a, b) => a.seq - b.seq);
+			return {
+				gholamChatMessages: { ...s.gholamChatMessages, [frame.chatId]: nextList },
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+			return;
+	}
+
+	case "gholam_chat_usage":
+		set((s) => {
+			const existing = s.gholamChats[frame.chatId];
+			if (!existing) return {};
+			return {
+				gholamChats: {
+					...s.gholamChats,
+					[frame.chatId]: { ...existing, usage: frame.usage },
+				},
+				gholamChatChangeCounter: s.gholamChatChangeCounter + 1,
+			};
+		});
+			return;
+
+case "store_item_added":
+	set((s) => ({
+		storefrontPulse: {
+			byId: { ...s.storefrontPulse.byId, [frame.item.id]: Date.now() },
+			counter: s.storefrontPulse.counter + 1,
+				},
+	}));
+			return;
+
+case "store_item_updated":
+	set((s) => ({
+		storefrontPulse: {
+			byId: s.storefrontPulse.byId,
+			counter: s.storefrontPulse.counter + 1,
+				},
+	}));
+			return;
+
+case "store_item_removed":
+		set((s) => {
+		const { [frame.id]: _gone, ...rest } = s.storefrontPulse.byId;
+		return { storefrontPulse: { byId: rest, counter: s.storefrontPulse.counter + 1 } };
+		});
+			return;
+
+case "discovery_added":
+	set((s) => ({ storefrontPulse: { byId: s.storefrontPulse.byId, counter: s.storefrontPulse.counter + 1 } }));
+			return;
+
+case "mcp_health":
+		set((s) => {
+	// Server pushes a single snapshot per probe cycle containing all probed
+	// servers; union each entry by `id` into the cached response so the
+	// strip re-renders without polling. `probedAt` is the max across the
+	// batch so the relative-time tooltip stays coherent under partial loss.
+		const prev = s.mcpHealth.response;
+		const byId = new Map<string, McpHealthStatus>();
+		for (const row of prev?.status ?? []) byId.set(row.id, row);
+	let latestProbe = prev?.probedAt ?? "";
+	for (const row of frame.status) {
+		byId.set(row.id, row);
+		if (row.probedAt > latestProbe) latestProbe = row.probedAt;
+	}
+		const next: McpHealthResponse = {
+			status: Array.from(byId.values()),
+		probedAt: latestProbe,
+			};
+		return { mcpHealth: { response: next, lastReceivedAtMs: Date.now() } };
+		});
+			return;
+
+	case "mcp_tools_changed":
+		// Drop the cached tools list for the affected server — the popover
+		// will re-fetch on next open. Keeping the entry in place would
+		// serve a stale disabledTools[] for up to 30s after the toggle.
+		set((s) => {
+			const next = { ...s.mcpToolsByName };
+			delete next[frame.name];
+			return {
+				mcpToolsByName: next,
+				mcpToolsChangeCounter: s.mcpToolsChangeCounter + 1,
+			};
+		});
+		return;
+}
 }
 
 // Selectors ────────────────────────────────────────────────────────────────
 export const selectActiveSession = (s: StoreState): SessionUi | undefined =>
 	s.activeId ? s.sessionsById[s.activeId] : undefined;
+/**
+ * Last active session id, so a reload resumes the same conversation.
+ * The key is inlined rather than hoisted into a module const: the store
+ * factory reads it during module evaluation, before a `const` declared
+ * below would be initialized (TDZ).
+ */
+function readLastSession(): string | undefined {
+	if (typeof localStorage === "undefined") return undefined;
+	// Sealed contexts (Safari private mode, embedded webviews with
+	// storage disabled) throw on `getItem` itself, not just on writes.
+	// `readLastSession` runs at module init — a throw here unwinds into
+	// a black-screen cold start, which is the exact "remote
+	// workstation" failure the user is hedging against.
+	try {
+		const raw = localStorage.getItem("omp-deck:last-session");
+		return raw && raw.length > 0 ? raw : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Persist (or clear) the last active session id across reloads. */
+function writeLastSession(id: string | undefined): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		if (id) localStorage.setItem("omp-deck:last-session", id);
+		else localStorage.removeItem("omp-deck:last-session");
+	} catch {
+		/* private mode / quota — persistence is best-effort */
+	}
+}
+
+function readModelSelection(): { provider: string; id: string } | undefined {
+	if (typeof localStorage === "undefined") return undefined;
+	let raw: string | null;
+	try {
+		raw = localStorage.getItem("omp-deck:model-selection");
+	} catch {
+		return undefined;
+	}
+	if (!raw) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as { provider?: string; id?: string };
+		if (typeof parsed.provider === "string" && typeof parsed.id === "string") {
+			return { provider: parsed.provider, id: parsed.id };
+		}
+	} catch {
+		/* ignore corrupt entry */
+	}
+	return undefined;
+}
+
+import { storefrontApi } from "./storefront-api";
+
+// ─── MCP toast + tools helpers ──────────────────────────────────────────────
+/**
+ * Single entry point for MCP-related toasts. Shared between the chrome
+ * popover, the storefront strip, and `/integrations` so every action
+ * surface lands the same `notifications[]` shape on the store.
+ */
+export function pushMcpToast(
+	level: NotificationLevel,
+	title: string,
+	body?: string,
+): void {
+	useStore.setState((s) => ({
+		notifications: [
+			...s.notifications,
+			{
+				id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				level,
+				title,
+				body,
+				timestamp: new Date().toISOString(),
+				receivedAtMs: Date.now(),
+				deliveredOs: false,
+				dismissed: false,
+			},
+		],
+	}));
+}
+
+/**
+ * Fetch + cache the per-server tool list. Returns the cached entry if it
+ * landed within the last 30s and no `mcp_tools_changed` frame has evicted
+ * it (the reducer drops the entry on every change). 30s is a ponytail
+ * choice — the chip popover opens / closes often while the user iterates
+ * on tool filters; longer caching risks serving state the server has
+ * already moved past.
+ */
+export function fetchMcpTools(name: string): Promise<ListMcpToolsResponse | null> {
+	const cached = useStore.getState().mcpToolsByName[name];
+	if (cached && Date.now() - cached.fetchedAt < 30_000) {
+		return Promise.resolve({ name, tools: cached.tools, disabledTools: cached.disabledTools });
+	}
+	return storefrontApi.mcpTools(name).then((res) => {
+		if (res) useStore.getState().cacheMcpTools(name, res);
+		return res;
+	});
+}

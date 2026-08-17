@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
-	DEFAULT_PRELUDE,
+	getDefaultPrelude,
 	getEffectivePrelude,
 	getPreludeFilePath,
 	readMaintenanceGateState,
@@ -59,9 +59,9 @@ afterEach(() => {
 });
 
 describe("prelude override", () => {
-	test("absent override falls back to DEFAULT_PRELUDE", () => {
+	test("absent override falls back to the built-in prelude", () => {
 		expect(readPreludeOverride()).toBeNull();
-		expect(getEffectivePrelude()).toBe(DEFAULT_PRELUDE);
+		expect(getEffectivePrelude()).toBe(getDefaultPrelude());
 	});
 
 	test("write then read round-trips verbatim", () => {
@@ -79,7 +79,7 @@ describe("prelude override", () => {
 		expect(existsSync(getPreludeFilePath())).toBe(true);
 		writePreludeOverride(null);
 		expect(existsSync(getPreludeFilePath())).toBe(false);
-		expect(getEffectivePrelude()).toBe(DEFAULT_PRELUDE);
+		expect(getEffectivePrelude()).toBe(getDefaultPrelude());
 	});
 
 	test("clearing an already-absent override is a no-op", () => {

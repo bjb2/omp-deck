@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { Download, Loader2, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import type {
 	ListMarketplaceResponse,
 	MarketplaceCatalogEntry,
@@ -11,7 +13,9 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { marketplaceApi } from "@/lib/marketplace-api";
+import { marketplaceExtrasApi, type ScoredMarketplaceEntry } from "@/lib/marketplace-api";
 import { cn } from "@/lib/utils";
+import type { DryRunInstallResponse, InstallPluginErrorResponse } from "@omp-deck/protocol";
 
 type ScopeFilter = "all" | "installed" | "available";
 
@@ -26,6 +30,13 @@ export function MarketplaceView() {
 	const [busyId, setBusyId] = useState<string | undefined>();
 	const [refreshing, setRefreshing] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
+	const [featured, setFeatured] = useState<ScoredMarketplaceEntry[]>([]);
+	const [popular, setPopular] = useState<ScoredMarketplaceEntry[]>([]);
+	const [dryRun, setDryRun] = useState<{ entryId: string; busy: boolean; result?: DryRunInstallResponse; error?: InstallPluginErrorResponse | { error: string } } | undefined>();
+	useEffect(() => {
+		void marketplaceExtrasApi.featured(8).then((r) => setFeatured(r.results)).catch(() => setFeatured([]));
+		void marketplaceExtrasApi.popular(12).then((r) => setPopular(r.results)).catch(() => setPopular([]));
+	}, [data]);
 
 	const refresh = useCallback(async (): Promise<void> => {
 		try {
@@ -94,6 +105,19 @@ export function MarketplaceView() {
 		}
 	}
 
+	async function toggleEnabled(info: { id: string; scope: "user" | "project"; enabled: boolean }): Promise<void> {
+		setBusyId(info.id);
+		setError(undefined);
+		try {
+			await marketplaceApi.setPluginEnabled(info.id, info.enabled, info.scope);
+			await refresh();
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
+			setBusyId(undefined);
+		}
+	}
+
 	async function refreshSources(): Promise<void> {
 		setRefreshing(true);
 		setError(undefined);
@@ -114,6 +138,18 @@ export function MarketplaceView() {
 			await refresh();
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
+		}
+	}
+
+	async function runDryRun(entry: MarketplaceCatalogEntry): Promise<void> {
+		setDryRun({ entryId: entry.id, busy: true });
+		try {
+			const resp = await marketplaceApi.dryRun({ name: entry.name, marketplace: entry.marketplace });
+			setDryRun((prev) => (prev?.entryId === entry.id ? { entryId: entry.id, busy: false, result: resp } : prev));
+		} catch (e) {
+			const raw = String((e as Error).message ?? e);
+			const parsed = parseDryRunError(raw);
+			setDryRun((prev) => (prev?.entryId === entry.id ? { entryId: entry.id, busy: false, error: parsed ?? { error: raw } } : prev));
 		}
 	}
 
@@ -138,7 +174,7 @@ export function MarketplaceView() {
 						onRemoveSource={(name) => void removeSource(name)}
 					/>
 				}
-				inspector={<MarketplaceInspector entry={selected} />}
+				inspector={<MarketplaceInspector entry={selected} dryRun={dryRun} onDryRun={(entry) => void runDryRun(entry)} />}
 				main={
 					<div className="flex h-full min-h-0 flex-col">
 						<div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-paper px-3">
@@ -146,8 +182,14 @@ export function MarketplaceView() {
 							<div className="text-xs text-ink-3">
 								{loading ? "loading..." : `${filtered.length} / ${data?.catalog.length ?? 0}`}
 							</div>
+							<Link
+								to="/storefront"
+								className="rounded-md border border-line bg-paper-2 px-2 py-1 text-xs text-ink-2 hover:border-ink/30 hover:text-ink"
+							>
+								Storefront →
+							</Link>
 							<div className="flex-1" />
-							<div className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-2 py-1 text-xs">
+							<div data-tooltip-key="marketplace.search" className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-2 py-1 text-xs">
 								<Search className="h-3.5 w-3.5 text-ink-3" />
 								<input
 									value={search}
@@ -174,7 +216,55 @@ export function MarketplaceView() {
 									No catalog entries match the current filters.
 								</div>
 							) : null}
-							<div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+							{(featured.length > 0 || popular.length > 0) ? (
+						<div className="mb-3 space-y-3">
+							{featured.length > 0 ? (
+								<section data-tooltip-key="marketplace.featured" className="rounded-md border border-accent/30 bg-accent-soft/40 p-3">
+									<div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-meta text-accent">
+										<span>Featured</span>
+										<span className="text-ink-3">· curated picks</span>
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{featured.map((entry) => (
+											<button
+												key={entry.id}
+												type="button"
+												onClick={() => setSelectedId(entry.id)}
+												data-tooltip-key="marketplace.install"
+												className="rounded-md border border-line bg-paper px-2.5 py-1 text-left text-xs hover:border-accent"
+											>
+												<div className="font-medium">{entry.name}</div>
+												<div className="text-ink-3 text-2xs">{entry.marketplace}</div>
+											</button>
+										))}
+									</div>
+								</section>
+							) : null}
+							{popular.length > 0 ? (
+								<section data-tooltip-key="marketplace.popular" className="rounded-md border border-line bg-paper-2 p-3">
+									<div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-meta text-ink-3">
+										<span>Popular</span>
+										<span className="text-ink-3">· this week</span>
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{popular.map((entry) => (
+											<button
+												key={entry.id}
+												type="button"
+												onClick={() => setSelectedId(entry.id)}
+												data-tooltip-key="marketplace.install"
+												className="rounded-md border border-line bg-paper px-2.5 py-1 text-left text-xs hover:border-accent"
+											>
+												<div className="font-medium">{entry.name}</div>
+												<div className="text-ink-3 text-2xs">{entry.marketplace}</div>
+											</button>
+										))}
+									</div>
+								</section>
+							) : null}
+						</div>
+					) : null}
+					<div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
 								{filtered.map((entry) => (
 									<EntryCard
 										key={entry.id}
@@ -185,6 +275,15 @@ export function MarketplaceView() {
 										onInstall={() => void install(entry)}
 										onUninstall={() =>
 											entry.installed ? void uninstall({ id: entry.id, scope: entry.installed.scope }) : undefined
+										}
+									onToggleEnabled={() =>
+										entry.installed
+											? void toggleEnabled({
+													id: entry.id,
+													scope: entry.installed.scope,
+													enabled: entry.installed.enabled === false,
+												})
+											: undefined
 										}
 									/>
 								))}
@@ -405,6 +504,7 @@ function EntryCard({
 	onSelect,
 	onInstall,
 	onUninstall,
+	onToggleEnabled,
 }: {
 	entry: MarketplaceCatalogEntry;
 	isSelected: boolean;
@@ -412,6 +512,7 @@ function EntryCard({
 	onSelect: () => void;
 	onInstall: () => void;
 	onUninstall: () => void;
+	onToggleEnabled: () => void;
 }) {
 	const caps = [
 		entry.capabilities.commands && "cmds",
@@ -438,6 +539,23 @@ function EntryCard({
 					{entry.installed ? (
 						<>
 							<Badge tone="success">installed</Badge>
+							<button
+								type="button"
+								className={cn(
+									"rounded-md px-1.5 py-0.5 text-2xs uppercase tracking-meta transition-colors",
+									entry.installed.enabled === false
+										? "border border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
+										: "border border-line bg-paper-2 text-ink-3 hover:border-ink/30 hover:text-ink",
+								)}
+								title={entry.installed.enabled === false ? "Enable plugin" : "Disable plugin"}
+								onClick={(e) => {
+									e.stopPropagation();
+									onToggleEnabled();
+								}}
+								disabled={busy}
+							>
+								{entry.installed.enabled === false ? "Enable" : "Disable"}
+							</button>
 							<button
 								type="button"
 								className="text-ink-3 hover:text-danger"
@@ -481,7 +599,24 @@ function EntryCard({
 	);
 }
 
-function MarketplaceInspector({ entry }: { entry: MarketplaceCatalogEntry | undefined }) {
+type DryRunState = { entryId: string; busy: boolean; result?: DryRunInstallResponse; error?: InstallPluginErrorResponse | { error: string } };
+
+function parseDryRunError(raw: string): InstallPluginErrorResponse | undefined {
+	const brace = raw.indexOf("{");
+	if (brace < 0) return undefined;
+	const slice = raw.slice(brace);
+	try {
+		const parsed = JSON.parse(slice) as { error?: string };
+		if (typeof parsed.error === "string" && parsed.error.length > 0) {
+			return parsed as InstallPluginErrorResponse;
+		}
+	} catch {
+		// Not JSON — fall through.
+	}
+	return undefined;
+}
+
+function MarketplaceInspector({ entry, dryRun, onDryRun }: { entry: MarketplaceCatalogEntry | undefined; dryRun?: DryRunState; onDryRun: (entry: MarketplaceCatalogEntry) => void }) {
 	if (!entry) {
 		return (
 			<div className="space-y-2 p-3 text-xs text-ink-3">
@@ -536,9 +671,41 @@ function MarketplaceInspector({ entry }: { entry: MarketplaceCatalogEntry | unde
 						}
 					/>
 				) : null}
-			</dl>
-		</div>
-	);
+			{dryRun?.entryId === entry.id ? (
+				<div className="space-y-2 pt-1">
+					<button
+						type="button"
+						onClick={() => onDryRun(entry)}
+						disabled={dryRun.busy}
+						className="inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-paper-2 px-2 text-xs font-medium text-ink-2 hover:border-accent hover:text-accent disabled:opacity-50"
+					>
+						{dryRun.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+						{dryRun.busy ? "Testing…" : "Test Install"}
+					</button>
+					{!dryRun.busy && dryRun.result ? (
+						<div className="space-y-0.5 rounded-md border border-success/30 bg-success/5 p-2 font-mono text-2xs text-ink-2">
+							<div className="text-success">✓ would install</div>
+							<div>name: {dryRun.result.manifest.name}</div>
+							{dryRun.result.manifest.version ? <div>version: {dryRun.result.manifest.version}</div> : null}
+							<div>clone: {dryRun.result.cloneUrl}</div>
+							{dryRun.result.ref ? <div>ref: {dryRun.result.ref}</div> : null}
+							<div>cache: {dryRun.result.wouldCacheTo}</div>
+						</div>
+					) : null}
+					{!dryRun.busy && dryRun.error ? (
+						<div className="space-y-0.5 rounded-md border border-danger/30 bg-danger/5 p-2 font-mono text-2xs text-ink-2">
+							<div className="text-danger">✗ {(dryRun.error as { error: string }).error}</div>
+							{(dryRun.error as { message?: string }).message ? <div>{(dryRun.error as { message?: string }).message}</div> : null}
+							{(dryRun.error as { hint?: string }).hint ? (
+								<div className="text-ink-3">hint: {(dryRun.error as { hint?: string }).hint}</div>
+							) : null}
+						</div>
+					) : null}
+				</div>
+			) : null}
+		</dl>
+	</div>
+);
 }
 
 function DefRow({ k, v }: { k: string; v: ReactNode }) {

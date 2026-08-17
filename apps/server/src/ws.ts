@@ -5,12 +5,42 @@ import type { AgentBridge } from "./bridge/types.ts";
 import { broadcastBus } from "./broadcast-bus.ts";
 import { logger } from "./log.ts";
 import { getBuildInfo, getUptimeSecs } from "./build-info.ts";
+import { checkGholamFramePermissions } from "./auth/gholam-permissions.ts";
+import { createAutoTasks, parseTaskCues } from "./auto-kanban.ts";
 const log = logger("ws");
+
+// Per-connection WS frame rate limit (100/sec rolling). 100 is well above
+// any normal UI's worst case (typing, streaming events, bulk subscribe) and
+// well below the volumes a flooded socket produces. See onMessage below.
+const CLIENT_FRAME_RATE_LIMIT = 100;
+const CLIENT_FRAME_WINDOW_MS = 1_000;
+const WS_CLOSE_POLICY_VIOLATION = 1008;
 
 /** Per-connection state. */
 export interface ConnectionData {
 	connectionId: string;
 	subscriptions: Map<string, () => void>;
+	/** Sliding window of client-driven frame receive times (ms). Heartbeat
+	 *  frames are server-pushed, so they're not counted. Used to close
+	 *  abusive connections that exceed CLIENT_FRAME_RATE_PER_SECOND in
+	 *  any rolling 1s window. */
+	frameTimestamps: number[];
+}
+
+/** Default minimum gap between consecutive frames of the same type on the
+ *  WS bus. 1s caps per-type round-trip cost without flattening realtime
+ *  (session_event, heartbeats, etc. are not throttled by this map).
+ *  `mcp_health` is intentionally floor'd at 30s — the probe loop runs
+ *  on its own 30s cadence, so a second-per-frame cap would be
+ *  meaningless, and dropping a probe result is fine because the next
+ *  one is ≤30s away. */
+const DEFAULT_THROTTLE_MS = 1_000;
+const THROTTLE_OVERRIDES: Record<string, number> = {
+	mcp_health: 30_000,
+};
+
+function throttleMinMs(type: string): number {
+	return THROTTLE_OVERRIDES[type] ?? DEFAULT_THROTTLE_MS;
 }
 
 /**
@@ -23,6 +53,9 @@ export const HEARTBEAT_INTERVAL_MS = 5000;
 export class WsHub {
 	private readonly connections = new Set<ServerWebSocket<ConnectionData>>();
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+	/** Last wall-clock time (ms) each throttled frame type was actually sent
+	 *  over the bus. Dropped frames do not bump this. */
+	private readonly lastSentByType = new Map<string, number>();
 
 	constructor(private bridge: AgentBridge) {
 		broadcastBus.subscribe((frame) => this.broadcast(frame));
@@ -61,6 +94,7 @@ export class WsHub {
 		return {
 			connectionId: crypto.randomUUID(),
 			subscriptions: new Map(),
+		frameTimestamps: [],
 		};
 	}
 
@@ -77,6 +111,45 @@ export class WsHub {
 		} catch {
 			send(ws, { type: "error", error: "invalid json" });
 			return;
+		}
+
+	// Per-connection rate limit. Heartbeat (`type: "ping"`) is a
+	// keep-alive the client sends — we still count it because floods
+	// of pings are the cheapest way to abuse the socket. A connection
+	// that exceeds CLIENT_FRAME_RATE_LIMIT frames in any 1s window is
+	// closed with 1008 (policy violation).
+	{
+		const now = Date.now();
+		const stamps = ws.data.frameTimestamps;
+		// Drop entries older than the window so the array stays bounded
+		// by the rate limit itself, not by session length.
+		const cutoff = now - CLIENT_FRAME_WINDOW_MS;
+		while (stamps.length > 0 && stamps[0]! < cutoff) stamps.shift();
+		stamps.push(now);
+		if (stamps.length > CLIENT_FRAME_RATE_LIMIT) {
+			log.warn(
+				`ws rate limit exceeded for ${ws.data.connectionId}: ${stamps.length} frames in ${CLIENT_FRAME_WINDOW_MS}ms`,
+			);
+			try {
+				ws.close(WS_CLOSE_POLICY_VIOLATION, "frame rate limit exceeded");
+			} catch {
+				// already closed; nothing to do
+			}
+			return;
+		}
+	}
+
+		// Gholam permission gate: only `gholam_command` frames are gated.
+		// Missing/empty requiredPermissions is a no-op (no gating needed).
+		// On failure, send an error frame back and drop the frame.
+		if (frame.type === "gholam_command") {
+			const required = frame.requiredPermissions ?? [];
+			const result = await checkGholamFramePermissions(required);
+			if (!result.ok) {
+				log.warn("gholam frame rejected for missing permissions", result.missing);
+				send(ws, { type: "error", error: `gholam:missing_permissions:${result.missing.join(",")}` });
+				return;
+			}
 		}
 
 		switch (frame.type) {
@@ -131,6 +204,10 @@ export class WsHub {
 
 	onClose(ws: ServerWebSocket<ConnectionData>): void {
 		this.connections.delete(ws);
+		// Drop the bucket so a re-allocated ConnectionData object on
+		// the same ws.data slot (rare, but possible across reconnects)
+		// starts from zero rather than inheriting a stale window.
+		ws.data.frameTimestamps.length = 0;
 		const subs = ws.data.subscriptions;
 		const connectionId = ws.data.connectionId;
 		log.debug(`close ${connectionId} subs=${subs.size}`);
@@ -145,7 +222,21 @@ export class WsHub {
 		subs.clear();
 	}
 
-	private broadcast(frame: ServerFrame): void {
+	/** Public so the bundle watcher (and any other emitter) can fan the
+	 *  frame out to every connected client without going through the
+	 *  broadcastBus (which is the channel the bus-driven frames use). */
+	public broadcast(frame: ServerFrame): void {
+		// Per-type rate limit on the bus. The probe/refresh cadences are
+		// independent; this only caps how many of those frames can squeeze
+		// through the bus per second. session_event etc. are unthrottled
+		// because their `type` is not in the override map AND their min
+		// interval is the default 1s — but a fast burst of distinct frame
+		// types will all pass since the key is the type string.
+		const minMs = throttleMinMs(frame.type);
+		const now = Date.now();
+		const last = this.lastSentByType.get(frame.type);
+		if (last !== undefined && now - last < minMs) return;
+		this.lastSentByType.set(frame.type, now);
 		const payload = JSON.stringify(frame);
 		for (const ws of this.connections) {
 			try {
@@ -154,6 +245,18 @@ export class WsHub {
 				log.warn(`broadcast send failed`, err);
 			}
 		}
+	}
+
+	/** Has any client received a throttled frame in the last `withinMs`?
+	 *  Used by background work (routines) to suppress push notifications
+	 *  when the user is at their desk — they're already seeing the live
+	 *  WS feed. */
+	hasRecentActivity(withinMs: number): boolean {
+		const cutoff = Date.now() - withinMs;
+		for (const last of this.lastSentByType.values()) {
+			if (last >= cutoff) return true;
+		}
+		return false;
 	}
 
 	// ───────────────────────────────────────────────────────────────────────
@@ -265,6 +368,12 @@ export class WsHub {
 			return;
 		}
 		handle.prompt(frame.text, opts).catch(sendError);
+	// Auto-kanban: deterministic splitter kicks in after the SDK session
+	// receives the prompt. Fire-and-forget — failure must never block
+	// the prompt send path.
+	if (!frame.text.startsWith("/")) {
+		fireAutoKanban(handle.cwd, frame.text);
+	}
 	}
 
 	private async handleAbort(ws: ServerWebSocket<ConnectionData>, sessionId: string): Promise<void> {
@@ -272,15 +381,14 @@ export class WsHub {
 		if (!handle) {
 			send(ws, { type: "error", sessionId, error: "session not active" });
 			return;
-		}
+	}
 		this.bridge.bumpActivity(sessionId);
 		try {
 			await handle.abort();
 		} catch (err) {
 			send(ws, { type: "error", sessionId, error: `abort failed: ${String(err)}` });
-		}
 	}
-
+	}
 	private handleClearQueue(ws: ServerWebSocket<ConnectionData>, sessionId: string): void {
 		const handle = this.bridge.getSession(sessionId);
 		if (!handle) {
@@ -430,4 +538,19 @@ export class WsHub {
 
 function send(ws: ServerWebSocket<ConnectionData>, frame: ServerFrame): void {
 	ws.send(JSON.stringify(frame));
+}
+
+/** Project label for a session cwd. Mirrors `routes.ts: deriveLabel`. */
+function deriveProjectName(cwd: string): string {
+	if (!cwd) return "default";
+	const parts = cwd.split(/[\\/]/).filter(Boolean);
+	return parts[parts.length - 1] ?? "default";
+}
+
+/** Fire-and-forget auto-kanban — never awaited, never throws. */
+function fireAutoKanban(cwd: string, text: string): void {
+	const projectName = deriveProjectName(cwd);
+	void createAutoTasks(parseTaskCues(text), cwd, projectName).catch((err) =>
+		log.warn(`auto-kanban ws hook failed`, err),
+	);
 }

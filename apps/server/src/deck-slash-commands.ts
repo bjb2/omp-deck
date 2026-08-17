@@ -125,6 +125,19 @@ export const DECK_SLASH_COMMANDS: DeckSlashCommand[] = [
 			};
 		},
 	},
+	{
+		name: "prompts-recommend",
+		description: "Open the prompt-recommendation panel for this session's cwd.",
+		handle() {
+			// Suggestions render via <PromptSuggestions /> in the composer
+			// (see apps/web/src/components/PromptSuggestions.tsx). The deck
+			// slash dispatcher echoes the synthetic round-trip output so
+			// chat-side consumers see a friendly line; the panel itself
+			// is driven by the composer's idle-5s heuristic and the
+			// /api/prompts/recommend HTTP endpoint.
+			return { kind: "consumed" as const, output: "Prompt suggestions panel — see composer." };
+		},
+	},
 ];
 
 

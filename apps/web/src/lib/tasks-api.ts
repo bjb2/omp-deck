@@ -64,4 +64,22 @@ export const tasksApi = {
 			body: JSON.stringify({ orderedIds }),
 		});
 	},
+	dispatch(id: string, body: { branches: number; prompt?: string }): Promise<Task> {
+		return req<Task>(`/tasks/${encodeURIComponent(id)}/dispatch`, {
+			method: "POST",
+			body: JSON.stringify(body),
+		});
+	},
+	mergeDispatchBranch(id: string, branchId: string): Promise<Task> {
+		return req<Task>(
+			`/tasks/${encodeURIComponent(id)}/dispatch/${encodeURIComponent(branchId)}/merge`,
+			{ method: "POST" },
+		);
+	},
+	discardDispatchBranch(id: string, branchId: string): Promise<Task> {
+		return req<Task>(
+			`/tasks/${encodeURIComponent(id)}/dispatch/${encodeURIComponent(branchId)}/discard`,
+			{ method: "POST" },
+		);
+	},
 };

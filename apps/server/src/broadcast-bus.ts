@@ -11,9 +11,18 @@ import type { ServerFrame } from "@omp-deck/protocol";
  */
 export type BroadcastFrame = Extract<
 	ServerFrame,
+	| { type: "deploy_state" }
 	| { type: "tasks_changed" }
 	| { type: "skills_changed" }
 	| { type: "kb_changed" }
+	| { type: "store_item_added" }
+	| { type: "store_item_updated" }
+	| { type: "store_item_removed" }
+	| { type: "discovery_added" }
+	| { type: "mcp_health" }
+	| { type: "mcp_tools_changed" }
+	| { type: "session_status_hint" }
+	| { type: "genui_delta" }
 	| { type: "oauth_consent" }
 	| { type: "oauth_progress" }
 	| { type: "oauth_prompt" }
@@ -25,6 +34,9 @@ export type BroadcastFrame = Extract<
 	| { type: "routine_run_finished" }
 	| { type: "heartbeat" }
 	| { type: "notification" }
+	| { type: "gholam_chat_message" }
+	| { type: "gholam_chat_state" }
+	| { type: "gholam_chat_usage" }
 >;
 
 type Listener = (frame: BroadcastFrame) => void;

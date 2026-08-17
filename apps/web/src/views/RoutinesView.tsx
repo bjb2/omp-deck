@@ -235,7 +235,7 @@ function RoutinesIndex({
 			) : null}
 
 			{loading ? (
-				<div className="flex flex-1 items-center justify-center text-sm text-ink-3">Loading...</div>
+				<div className="flex flex-1 items-center justify-center"><div className="meta">Loading…</div></div>
 			) : routines.length === 0 ? (
 				<div className="flex flex-1 items-center justify-center px-6 text-center">
 					<div className="max-w-sm">

@@ -29,6 +29,7 @@
 	"type": "module",
 	"workspaces": [
 		"apps/*",
+		"apps/gholam",
 		"apps/bridges/*",
 		"packages/*"
 	],
@@ -63,8 +64,8 @@
 		"node": ">=18"
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "15.1.7",
-		"@oh-my-pi/pi-coding-agent": "15.1.7",
+		"@oh-my-pi/pi-ai": "17.2.15",
+		"@oh-my-pi/pi-coding-agent": "17.2.15",
 		"@omp-deck/protocol": "0.6.1",
 		"ajv": "^8.17.1",
 		"ajv-formats": "^3.0.1",
@@ -77,6 +78,9 @@
 		"@omp-deck/protocol"
 	],
 	"devDependencies": {
+		"jsdom": "^30.0.1",
+		"jsqr": "^1.4.0",
+		"qrcode": "^1.5.4",
 		"typescript": "^5.6.3"
 	}
 }

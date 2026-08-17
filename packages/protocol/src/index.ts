@@ -16,6 +16,25 @@
 export { validateRoutineSpec } from "./validate";
 export type { ValidationError, ValidationResult } from "./validate";
 
+// Re-export the gholam permission registry. Canonical source so the
+// sidecar (apps/gholam) and server (apps/server) reference the same table.
+export { GHOLAM_PERMISSIONS } from "./permissions";
+export type { GholamPermission } from "./permissions";
+
+// Local imports for the gholam text-suggestion frames so the ServerFrame /
+// ClientFrame unions below can reference them by short name. The re-export
+// below does NOT make the names available to in-file type references.
+import type { GholamPermission } from "./permissions";
+import type {
+	GholamTextSuggestion,
+	GholamTextSuggestFrame,
+	GholamTextApplyFrame,
+} from "./gholam-suggest";
+
+// Re-export the gholam text-suggestion frames. Append-only addition to the
+// ServerFrame / ClientFrame unions below; see `./gholam-suggest.ts`.
+export type { GholamTextSuggestion, GholamTextSuggestFrame, GholamTextApplyFrame } from "./gholam-suggest";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REST shapes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +52,24 @@ export interface SessionSummary {
 	createdAt: string;
 	updatedAt: string;
 	messageCount: number;
+	/** Deck-managed flag; false until the operator archives the session. */
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+	/** `<owner>/<repo>` id of the bound repo, if any. */
+	repoId?: string;
+	/** Worktree branch the session is bound to; resolved to a path on read. */
+	worktree?: string;
+	/**
+	 * AI-generated one-sentence description of the session. Persisted as
+	 * `session.ai_summary` (TEXT); populated by `POST /api/sessions/:id/regenerate-meta`.
+	 */
+	aiSummary?: string;
+	/** AI-generated short tags (≤5). Persisted as `session.ai_tags` (JSON array string). */
+	aiTags?: string[];
+	/** ISO timestamp the AI metadata was last generated. `session.ai_generated_at`. */
+	aiGeneratedAt?: string;
 }
 
 export interface WorkspaceEntry {
@@ -41,12 +78,43 @@ export interface WorkspaceEntry {
 	sessionCount: number;
 }
 
+/**
+ * One entry in the directory-picker response from `GET /api/fs/dialog`.
+ * `path` is the absolute path; `isDir` is always true (the picker only
+ * surfaces subdirectories so the user can drill in).
+ */
+export interface FsDialogEntry {
+	name: string;
+	path: string;
+	isDir: true;
+}
+
+/** Response body for `GET /api/fs/dialog?cwd=<absolute>&q=<>`. */
+export interface ListFsDialogResponse {
+	entries: FsDialogEntry[];
+}
+
+/** Body of `POST /api/workspaces/register`. `cwd` must be an absolute path. */
+export interface RegisterWorkspaceRequest {
+	cwd: string;
+}
+
+/** Response body for `POST /api/workspaces/register`. */
+export interface RegisterWorkspaceResponse {
+	ok: true;
+	workspace: WorkspaceEntry;
+}
+
 export interface CreateSessionRequest {
 	cwd: string;
 	resumeFromPath?: string;
 	model?: ModelRef;
 	/** Do not fire the configured auto-start prompt when this creates a fresh session. */
 	suppressAutoStart?: boolean;
+	/** `<owner>/<repo>` id; when paired with `worktreeBranch` the session binds to that path. */
+	repoId?: string;
+	/** Branch name of a managed worktree; if both set and path exists, `cwd` is overridden. */
+	worktreeBranch?: string;
 }
 
 export interface CreateSessionResponse {
@@ -57,7 +125,32 @@ export interface CreateSessionResponse {
 
 export interface ListSessionsQuery {
 	cwd?: string;
+	/** `"1"` to include archived sessions in the list. */
+	archived?: string;
+	/** Group by `repo` | `status` | `urgency` | `importance`. */
+	groupBy?: string;
+	/** Filter by `<owner>/<repo>` id. */
+	repoId?: string;
+	/** Filter by urgency value (`low` | `normal` | `high` | `critical`). */
+	urgency?: string;
+	/** Filter by importance value (`low` | `normal` | `high` | `critical`). */
+	importance?: string;
 }
+/** Body of `PATCH /api/sessions/:id`. Any subset of fields; unspecified fields are left unchanged. */
+export interface PatchSessionRequest {
+	title?: string;
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+}
+
+/** Urgency dial surfaced on the session row. Drives the badge colour in the sidebar. */
+export type SessionUrgency = "low" | "normal" | "high" | "critical";
+/** Importance dial surfaced on the session row. Independent of urgency. */
+export type SessionImportance = "low" | "normal" | "high" | "critical";
+/** Lifecycle status surfaced on the session row. Defaults to `active`. */
+export type SessionStatus = "active" | "idle" | "archived" | "error";
 
 export interface ListSessionsResponse {
 	sessions: SessionSummary[];
@@ -401,6 +494,25 @@ export interface InstallPluginResponse {
 
 export interface UninstallPluginRequest {
 	id: string; // "name@marketplace"
+	scope?: "user" | "project";
+}
+
+/**
+ * Diff row: installed plugin's recorded version lags the catalog version.
+ * Drives the storefront "Update" button + the `/api/marketplace/updates`
+ * polling endpoint.
+ */
+export interface MarketplaceUpdate {
+	id: string; // "name@marketplace"
+	installed: string;
+	available: string;
+}
+
+export interface ListMarketplaceUpdatesResponse {
+	updates: MarketplaceUpdate[];
+}
+
+export interface UpgradePluginRequest {
 	scope?: "user" | "project";
 }
 
@@ -809,8 +921,10 @@ export interface ExtUiDialogResponse {
 	timedOut?: true;
 }
 
-/** Client → Server. */
-export type ClientFrame =
+/** Client → Server. Internal name; consumers should use the augmented
+ *  `ClientFrame` re-export below, which adds `gholam_command` for the
+ *  gholam permissions gate. */
+type _ClientFrameBase =
 	| { type: "ping" }
 	| { type: "subscribe"; sessionId: string }
 	| { type: "unsubscribe"; sessionId: string }
@@ -878,8 +992,36 @@ export type ClientFrame =
 			editedContent?: string;
 	  };
 
-/** Server → Client. */
-export type ServerFrame =
+/**
+ * Client → Server. A gholam-mediated command. The deck's `gholam_rest`
+ * surface and the gholam sidecar (via the deck → sidecar WS) both
+ * submit frames of this shape; the server-side gate in
+ * `apps/server/src/auth/gholam-permissions.ts` inspects
+ * `requiredPermissions` and consults the user's grant file before
+ * dispatching. Empty/missing permissions default to no gating.
+ */
+export interface GholamCommandFrame {
+	type: "gholam_command";
+	method: string;
+	requiredPermissions?: GholamPermissionKey[];
+}
+
+/**
+ * String-typed permission key. Mirrors `GholamPermission` in
+ * `apps/gholam/src/permissions.ts`. Defined here as a string alias so the
+ * protocol package stays free of sidecar-imports — the sidecar module is
+ * the source of truth at runtime.
+ */
+export type GholamPermissionKey = GholamPermission;
+
+/** Client → Server. Augmented with `gholam_command` for the gholam
+ *  permissions gate. Same union pattern as `ServerFrame`. */
+export type ClientFrame = _ClientFrameBase | GholamCommandFrame | GholamTextApplyFrame;
+
+/** Server → Client. Internal name; consumers should use the augmented
+ *  `ServerFrame` re-export below, which adds `reload_available` and
+ *  `deploy_state` variants for the soft-reload + deploy-state features. */
+type _ServerFrameBase =
 	| { type: "hello"; connectionId: string }
 	| { type: "pong" }
 	| { type: "subscribed"; sessionId: string; snapshot: SessionSnapshot }
@@ -1074,7 +1216,142 @@ export type ServerFrame =
 			actionUrl?: string;
 			timestamp: string;
 	  }
-	| { type: "error"; sessionId?: string; error: string };
+	/**
+	 * Storefront catalog event: an item appeared (live SSE pulse), was mutated
+	 * in place, or was removed entirely. Pushed by the deck's seed loader,
+	 * marketplace-watcher, KB-watcher, and skill-scanner. Web subscribers
+	 * merge into the zustand `storefront.itemsBySection` map and render a
+	 * pulse ring on arrival.
+	 */
+	| { type: "store_item_added"; section: StoreSection; item: StoreItem }
+	| { type: "store_item_updated"; section: StoreSection; item: StoreItem }
+	| { type: "store_item_removed"; section: StoreSection; id: string }
+	/**
+	 * Bulk fan-out: a discovery provider returned a fresh result batch.
+	 * The web zustand store merges into `livePulseIds` for the SSE pulse
+	 * effect. Throttled per-provider by the WsHub's broadcast throttle.
+	 */
+	| { type: "discovery_added"; hits: DiscoveryHit[] }
+	/**
+	 * MCP server probe snapshot. Pushed by the McpHealthProbe loop after
+	 * each successful (or failed) tools/list round. The WsHub throttle
+	 * caps at 1/sec for this type so a 30s probe cadence across many
+	 * servers can't flood the bus. `status` is the full snapshot — not a
+	 * single server — because the UI derives the worst-current state across
+	 * all servers for the chrome badge and the per-row studio list; per-
+	 * server frames would either have to be batched at the bus or dropped
+	 * silently under throttle.
+	 */
+	| { type: "mcp_health"; status: McpHealthStatus[] }
+	/**
+	 * Per-MCP-server tool filter changed. Pushed by
+	 * `POST /api/mcp/:name/tools/:tool/toggle` after a successful write.
+	 */
+	| { type: "mcp_tools_changed"; name: string; disabledTools: string[] }
+	/**
+	 * Server-side idle classification. The deck's companion runtime polls
+	 * the bridge for sessions that have been quiet for a while and asks
+	 * the LLM to label the last ~20 transcript lines as one of the five
+	 * `hint` values. The web client renders a status pill on the session
+	 * card and can bump the badge when `hint` is `needs_input` or `error`.
+	 *
+	 * Best-effort: the absence of a frame for a session means "no signal"
+	 * (treat as `working`); clients MUST NOT use the hint for anything
+	 * authoritative. The companion never classifies a session that
+	 * recently received user activity — the bridge's `lastActivityAt`
+	 * threshold acts as the noise filter.
+	 */
+	| {
+			type: "session_status_hint";
+			sessionId: string;
+			hint: "working" | "needs_input" | "error" | "done" | "idle";
+	  }
+	/**
+	 * Persistent Gholam chat — a new message landed in the append-only log.
+	 * Broadcast on every assistant / user / tool row insert so the chat-list
+	 * view and the chat-thread view reconcile without per-chat subscribe.
+	 */
+	| { type: "gholam_chat_message"; chatId: string; message: GholamChatMessageWire }
+	/**
+	 * Persistent Gholam chat — the state machine transitioned (`running`,
+	 * `paused`, `awaiting_user`, `awaiting_tool`, `completed`, `failed`). The
+	 * runtime loop and the rest/cancel routes emit these. Throttled at 1s
+	 * (default) so a busy loop can't flood the bus; broadcast (not per-chat
+	 * subscribe) so the list view re-renders.
+	 */
+	| { type: "gholam_chat_state"; chatId: string; state: GholamChatState; usage?: ChatUsage }
+	/**
+	 * Persistent Gholam chat — usage telemetry update. Carried separately
+	 * from `gholam_chat_state` so the inspector pane can update cost without
+	 * reading the full row on every delta. Cheap: a few ints.
+	 */
+	| { type: "gholam_chat_usage"; chatId: string; usage: ChatUsage }
+	| { type: "error"; sessionId?: string; error: string }
+	/**
+	 * GenUI delta: one frame streamed by `GET /api/genui/stream` (or a
+	 * sidecar preview pass). The node carries a full `GenComponent` (see
+	 * the GenComponent discriminated union below) the renderer dispatches
+	 * against the whitelist. `done` frames are terminal — `finalHash`
+	 * lets the client dedupe replays of an identical stream.
+	 */
+	| {
+			type: "genui_delta";
+			route: string;
+			frame:
+				| { kind: "frame"; node: GenComponent }
+				| { kind: "done"; finalHash: string };
+			/** Mirrors the client allowlist version so a stale client can
+			 *  refuse to render before invoking the renderer. */
+			allowlistVersion: string;
+	  };
+
+/**
+ * Phase of the deck's own build/deploy pipeline. Mirrors the state machine
+ * `idle → queued → building → deploying → verifying → healthy | failed`.
+ * `ref` is the git sha or openship deployment id; `triggeredBy` attributes
+ * the action (gholam / user / ci); `logTail` is the trailing bytes of the
+ * build/deploy output for the badge's tooltip.
+ */
+export type DeployPhase =
+	| "idle"
+	| "queued"
+	| "building"
+	| "deploying"
+	| "verifying"
+	| "healthy"
+	| "failed";
+
+export interface DeployState {
+	phase: DeployPhase;
+	triggeredBy: "gholam" | "user" | "ci";
+	ref?: string;
+	startedAt?: string;
+	updatedAt: string;
+	logTail?: string;
+	error?: string;
+}
+
+export interface ReloadAvailableFrame {
+	type: "reload_available";
+	bundleHash: string;
+	ts: number;
+}
+
+export interface DeployStateFrame {
+	type: "deploy_state";
+	state: DeployState;
+}
+
+/**
+ * Server → Client. Augmented with `reload_available` (server pushes when
+ * the bundle hash changes; client soft-reloads) and `deploy_state`
+ * (live build/deploy phase for the DeployStatusBadge).
+ */
+export type ServerFrame =
+	| _ServerFrameBase
+	| ReloadAvailableFrame
+	| DeployStateFrame
+	| GholamTextSuggestFrame;
 
 /** Severity for a deck notification. Drives the audio tone + visual styling. */
 export type NotificationLevel = "info" | "warn" | "error" | "critical";
@@ -1091,6 +1368,84 @@ export interface NotificationPayload {
 	/** Optional deep-link the user can click to jump to the relevant view. */
 	actionUrl?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generative UI (§3 of docs/GENERATIVE.md) — shared component vocabulary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Action descriptor emitted by `<GenButton>` / `<GenForm>`. The kind
+ *  drives the wire routing (existing WS frames; no new channels). */
+export interface GenAction {
+	kind: "mcp_call" | "gholam_command" | "navigate" | "submit_prompt";
+	payload: Record<string, unknown>;
+}
+
+/** One field descriptor inside a `<GenForm>`. The renderer builds a real
+ *  `<input>` per field; rich pickers are deliberately absent from v1. */
+export interface GenField {
+	name: string;
+	label: string;
+	kind: "text" | "number" | "checkbox";
+	placeholder?: string;
+	defaultValue?: string | number | boolean;
+}
+
+/** Discriminated union of every whitelisted GenUI component. Mirrors the
+ *  client file `apps/web/src/lib/genui/components.ts` and the server
+ *  prompt-context file `apps/server/src/genui-allowlist.ts` — all three
+ *  must stay byte-identical for the discriminator to land in the same
+ *  branch on both sides. Bump `GENUI_ALLOWLIST_VERSION` (each mirror)
+ *  on breaking changes. */
+export type GenComponent =
+	| { type: "GenStack"; props?: { gap?: number }; children: GenNode[] }
+	| {
+			type: "GenRow";
+			props?: { gap?: number; align?: "start" | "center" | "end" };
+			children: GenNode[];
+	  }
+	| {
+			type: "GenGrid";
+			props?: { cols?: number; gap?: number };
+			children: GenNode[];
+	  }
+	| {
+			type: "GenText";
+			props?: { size?: "xs" | "sm" | "md" | "lg"; tone?: "default" | "muted" | "danger" | "accent" };
+			content: string;
+	  }
+	| { type: "GenMarkdown"; content: string }
+	| { type: "GenCode"; props?: { lang?: string }; content: string }
+	| { type: "GenImage"; props: { src: string; alt?: string } }
+	| { type: "GenVideo"; props: { src: string } }
+	| { type: "GenButton"; props: { label: string; action: GenAction } }
+	| { type: "GenAction"; props: GenAction }
+	| { type: "GenTable"; props: { headers: string[] }; rows: GenNode[][] }
+	| { type: "GenKeyValue"; entries: Array<{ key: string; value: GenNode }> }
+	| { type: "GenCard"; props?: { title?: string }; children: GenNode[] }
+	| {
+			type: "GenTabs";
+			props?: { default?: string };
+			tabs: Array<{ id: string; label: string; content: GenNode }>;
+	  }
+	| { type: "GenModal"; props: { title?: string; onClose: GenAction }; children: GenNode[] }
+	| { type: "GenForm"; props: { submit: GenAction; fields: GenField[] } };
+
+/** A node in the rendered tree. Components recursively contain nodes; a
+ *  bare string is rendered as an inline text leaf. Numbers / booleans /
+ *  null are coerced to text by the renderer. */
+export type GenNode = GenComponent | string | number | boolean | null;
+
+/** Wire shape streamed by `GET /api/genui/stream`. One line per frame;
+ *  the terminal `done` line carries a hash so the client can dedupe
+ *  replays. */
+export type GenFrame =
+	| { type: "frame"; node: GenComponent; allowlistVersion: string }
+	| { type: "done"; finalHash: string; allowlistVersion: string };
+
+/** Bumped on breaking changes to the GenComponent vocabulary. Clients refuse
+ *  to render frames tagged with a stale version; the server prompt-context
+ *  mirror (`apps/server/src/genui-allowlist.ts`) exports the same constant. */
+export const GENUI_ALLOWLIST_VERSION = "1.0.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool-call rendering hints (used by the web app to pick a renderer)
@@ -1150,6 +1505,26 @@ export interface Task {
 	 */
 	stateEnteredAt: string;
 	archivedAt?: string;
+	dispatchJson?: string;
+	dispatch?: TaskDispatch;
+	energyTag?: "low" | "medium" | "high";
+}
+
+export type TaskDispatchStatus = "running" | "merged" | "discarded" | "failed";
+export type DispatchBranchStatus = TaskDispatchStatus;
+
+export interface TaskDispatchBranch {
+	id: string;
+	worktreePath: string;
+	branchName: string;
+	sessionId: string | null;
+	status: TaskDispatchStatus;
+	createdAt: string;
+}
+export type DispatchBranch = TaskDispatchBranch;
+
+export interface TaskDispatch {
+	branches: TaskDispatchBranch[];
 }
 
 export interface CreateTaskRequest {
@@ -1157,6 +1532,8 @@ export interface CreateTaskRequest {
 	body?: string;
 	stateId?: string;
 	cwd?: string;
+	energyTag?: "low" | "medium" | "high";
+	dispatchJson?: string;
 }
 
 export interface UpdateTaskRequest {
@@ -1166,6 +1543,8 @@ export interface UpdateTaskRequest {
 	orderInState?: number;
 	cwd?: string;
 	archived?: boolean;
+	energyTag?: "low" | "medium" | "high";
+	dispatchJson?: string;
 }
 
 export interface ListTasksResponse {
@@ -1720,4 +2099,811 @@ export interface OAuthManualCodeRequest {
 export interface OAuthPromptReplyRequest {
 	promptId: string;
 	answer: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File explorer
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FileEntryKind = "file" | "dir" | "symlink";
+
+export interface FileEntry {
+	name: string;
+	path: string;
+	kind: FileEntryKind;
+	sizeBytes: number | null;
+	modifiedAt: string | null;
+}
+
+export interface ListDirResponse {
+	path: string;
+	entries: FileEntry[];
+}
+
+export interface ReadFileResponse {
+	path: string;
+	content: string;
+	sizeBytes: number;
+}
+
+export interface WriteFileRequest {
+	path: string;
+	content: string;
+}
+
+export interface MakeDirRequest {
+	path: string;
+}
+
+export interface RenamePathRequest {
+	from: string;
+	to: string;
+}
+
+export interface DeleteFileRequest {
+	path: string;
+	recursive?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Git cockpit
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GitFileStatus =
+	| "modified"
+	| "added"
+	| "deleted"
+	| "renamed"
+	| "copied"
+	| "untracked"
+	| "ignored"
+	| "unmerged"
+	| "typechange";
+
+export interface GitStatusEntry {
+	path: string;
+	origPath?: string;
+	staged: GitFileStatus | null;
+	unstaged: GitFileStatus | null;
+}
+
+export interface GitRepoStatus {
+	cwd: string;
+	branch: string | null;
+	upstream: string | null;
+	ahead: number;
+	behind: number;
+	detached: boolean;
+	entries: GitStatusEntry[];
+	clean: boolean;
+}
+
+export interface GitDiffResponse {
+	path: string;
+	patch: string;
+	binary: boolean;
+}
+
+export interface StageRequest {
+	cwd: string;
+	paths: string[];
+}
+
+export interface DiscardRequest {
+	cwd: string;
+	paths: string[];
+}
+
+export interface CommitRequest {
+	cwd: string;
+	message: string;
+	amend?: boolean;
+}
+
+export interface CommitResult {
+	sha: string;
+	summary: string;
+}
+
+export interface CommitLogEntry {
+	sha: string;
+	shortSha: string;
+	author: string;
+	authorEmail: string;
+	date: string;
+	subject: string;
+}
+
+export interface GitLogResponse {
+	commits: CommitLogEntry[];
+}
+
+export interface GitBranch {
+	name: string;
+	current: boolean;
+	remote: boolean;
+	upstream: string | null;
+}
+
+export interface GitBranchesResponse {
+	branches: GitBranch[];
+}
+
+export interface CheckoutBranchRequest {
+	cwd: string;
+	branch: string;
+	create?: boolean;
+}
+
+export interface GitSyncResult {
+	ok: true;
+	summary: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GitHub-native
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GitHubStatusResponse {
+	configured: boolean;
+}
+
+export interface GitHubViewer {
+	login: string;
+	name: string | null;
+	avatarUrl: string;
+}
+
+export interface GitHubRepoSummary {
+	id: number;
+	fullName: string;
+	name: string;
+	owner: string;
+	private: boolean;
+	description: string | null;
+	defaultBranch: string;
+	pushedAt: string;
+	updatedAt: string;
+	stargazersCount: number;
+	cloneUrl: string;
+	sshUrl: string;
+	fork: boolean;
+	archived: boolean;
+	localPath?: string;
+}
+
+export interface ListGitHubReposResponse {
+	repos: GitHubRepoSummary[];
+}
+
+export interface GitHubBranch {
+	name: string;
+	commit: { sha: string; url: string };
+	protected: boolean;
+}
+
+export interface GitHubCommit {
+	sha: string;
+	message: string;
+	author: { name: string; email: string; date: string };
+	url: string;
+}
+
+// GitHub's PR payload is passed through unmodified (no server-side
+// snake_case→camelCase mapping), so this mirrors the raw API shape —
+// matching `apps/server/src/github-service.ts`'s `GitHubPullRequest`.
+export interface GitHubPullRequest {
+	id: number;
+	number: number;
+	title: string;
+	body: string | null;
+	state: "open" | "closed";
+	head: { ref: string; sha: string };
+	base: { ref: string; sha: string };
+	user: { login: string; avatar_url: string };
+	created_at: string;
+	updated_at: string;
+	html_url: string;
+}
+export interface CloneRepoRequest {
+	fullName: string;
+	intoRoot?: string;
+}
+
+export interface CloneRepoResponse {
+	path: string;
+	alreadyExisted: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent-config manager
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AgentFileEntry {
+	name: string;
+	path: string;
+	kind: "file" | "dir";
+	sizeBytes: number | null;
+	modifiedAt: string | null;
+	isDatabase: boolean;
+}
+
+export interface ListAgentDirResponse {
+	path: string;
+	entries: AgentFileEntry[];
+}
+
+export interface ReadAgentFileResponse {
+	path: string;
+	content: string;
+}
+
+export type AgentImportMode = "merge" | "full-reset";
+export type AgentImportChange = "add" | "modify" | "remove";
+
+export interface AgentImportPlanEntry {
+	path: string;
+	change: AgentImportChange;
+	isDatabase: boolean;
+}
+
+export interface AgentImportPlan {
+	stagingId: string;
+	entries: AgentImportPlanEntry[];
+	addedCount: number;
+	modifiedCount: number;
+	removedCount: number;
+	touchesDatabase: boolean;
+}
+
+export interface AgentImportApplyResponse {
+	backupPath: string;
+	appliedPath: string;
+	restart: RestartServerResponse;
+}
+
+export interface AgentConfigBackup {
+	name: string;
+	path: string;
+	createdAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt library (§4 of docs/STOREFRONT.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where an imported prompt came from. `user` = local capture; the others
+ *  are populated when the user saves a result from the discovery view. */
+export interface PromptSource {
+	kind: "github" | "web" | "kb" | "user";
+	url: string;
+	capturedAt: string;
+}
+
+/** A single prompt record persisted as `~/.omp-deck/prompts/<id>.json`.
+ *  `variables` is the extracted handlebars list — always derived from
+ *  `body` on read so it can never drift from the source of truth. */
+export interface Prompt {
+	id: string;
+	title: string;
+	body: string;
+	category: string;
+	tags: string[];
+	variables: string[];
+	shareSlug?: string;
+	createdAt: string;
+	updatedAt: string;
+	usageCount: number;
+	lastUsedAt: string | null;
+	pinned: boolean;
+	source?: PromptSource;
+}
+
+/** Response body for `GET /api/prompts/library`. */
+export interface ListPromptsResponse {
+	prompts: Prompt[];
+}
+
+/** Body for `POST /api/prompts/library` (create). */
+export interface CreatePromptRequest {
+	title: string;
+	body: string;
+	category?: string;
+	tags?: string[];
+	share?: boolean;
+	source?: PromptSource;
+}
+
+/** Body for `PUT /api/prompts/library/:id` (partial update). */
+export interface UpdatePromptRequest {
+	title?: string;
+	body?: string;
+	category?: string;
+	tags?: string[];
+	share?: boolean;
+	pinned?: boolean;
+}
+
+/** Body for `POST /api/prompts/library/import`. Accepts a single Prompt
+ *  payload, a JSON string of one, or `{ url: "<github gist URL>" }` (the
+ *  server pulls gist content and treats the first file as the prompt body). */
+export interface ImportPromptRequest {
+	prompt?: Prompt;
+	url?: string;
+	rawJson?: string;
+}
+
+/** Signal that contributed to a recommendation. Used by the UI to render
+ *  the "why" tooltip without re-deriving the match. */
+export type PromptRecommendationSignal = "project" | "history" | "usage";
+
+/** Score breakdown for one recommendation. The `score` is the cosine
+ *  similarity over TF-IDF vectors (range 0–1); `why` is a human-readable
+ *  summary the UI shows next to the entry. */
+export interface PromptRecommendation {
+	prompt: Prompt;
+	score: number;
+	why: string;
+	matchedSignals: PromptRecommendationSignal[];
+}
+
+/** Response body for `GET /api/prompts/recommend`. */
+export interface ListPromptRecommendationsResponse {
+	recommendations: PromptRecommendation[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Storefront, Discovery, MCP Health (§1, §2, §3, §6 of docs/STOREFRONT.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A storefront section. Drives the navigation chip + the per-page route. */
+export type StoreSection = "plugins" | "mcps" | "skills" | "prompts";
+
+/** Single storefront item — one installable across the four sections. */
+export interface StoreItem {
+	id: string;
+	section: StoreSection;
+	name: string;
+	/** ≤140 chars; surfaced as the card subtitle / hero tagline. */
+	tagline: string;
+	/** Markdown body for the detail page "About" pane. */
+	description: string;
+	author: { name: string; url?: string; avatar?: string };
+	icon: string;
+	screenshots: string[];
+	ratings: { stars: number; count: number };
+	installs: number;
+	lastUpdated: string;
+	source: {
+		kind: "marketplace" | "github" | "web" | "kb";
+		url: string;
+		ref?: string;
+	};
+	versionHistory: { version: string; date: string; notes: string }[];
+	capabilities: { toolNames: string[]; categories: string[]; triggers: string[] };
+	installAction: {
+		kind: "marketplace" | "mcp" | "skill" | "prompt";
+		/** Opaque payload — the consumer (web + extensions) knows the shape per `kind`. */
+		payload: unknown;
+	};
+	/** First indexed within the last 24h. Drives the "New" chip. */
+	isNew?: boolean;
+	/** Server is currently pushing an SSE pulse for this item. */
+	isLive?: boolean;
+	/** Backend knows this item is currently installed from the registry. Drives the primary CTA toggle on the detail page. */
+	installed?: boolean;
+	/** Catalog version differs from the installed-registry version. Renders a small dot on the card. */
+	updateAvailable?: boolean;
+	/** Source matches the curated known-good-sources list. Renders a "Verified" chip on the card. */
+	verified?: boolean;
+}
+
+/** Single discovery result from a provider search. */
+export interface DiscoveryHit {
+	id: string;
+	section: "plugins" | "mcps" | "skills" | "prompts" | "kb";
+	title: string;
+	tagline?: string;
+	/** ≤600 chars preview; truncated server-side. */
+	description?: string;
+	author?: { name: string; url?: string; avatar?: string };
+	iconUrl?: string;
+	/** Canonical "open" deep link — routes to the storefront detail page. */
+	url: string;
+	source: {
+		kind: "marketplace" | "github" | "web" | "kb" | "local";
+		/** Marketplace name | "owner/repo" | URL | KB path. */
+		ref: string;
+		fetchedAt: string;
+	};
+	/** First 2KB / first paragraph — preview snippet for the result card. */
+	snippet?: string;
+	capabilities?: { toolNames?: string[]; categories?: string[]; triggers?: string[] };
+	/** Server-computed relevance (0–1). */
+	score: number;
+	/** Provenance tags — shown under the title in the result row. */
+	signals: string[];
+}
+
+/** Per-MCP-server health row from the McpHealthProbe loop. */
+export interface McpHealthStatus {
+	/** Stable across restarts; composite of scope + transport + server name. */
+	id: string;
+	name: string;
+	transport: "stdio" | "http";
+	scope: "deck" | "gholam";
+	state: "healthy" | "degraded" | "unreachable" | "unknown" | "disabled";
+	lastSuccessAt: string | null;
+	lastErrorAt: string | null;
+	lastError?: string;
+	lastLatencyMs: number | null;
+	/** From the last successful tools/list response. */
+	toolCount?: number;
+	probedAt: string;
+}
+
+/**
+ * One tool advertised by an MCP server (the raw `tools/list` payload, minus
+ * server-prefixing). Used by the per-server tool picker.
+ */
+export interface McpToolSpec {
+	name: string;
+	description?: string;
+	inputSchema?: unknown;
+}
+
+/** Response body for `GET /api/mcp/:name/tools`. */
+export interface ListMcpToolsResponse {
+	name: string;
+	tools: McpToolSpec[];
+	disabledTools: string[];
+}
+
+/** Body for `POST /api/mcp/:name/tools/:tool/toggle`. */
+export interface ToggleMcpToolRequest {
+	enabled: boolean;
+}
+
+export interface ToggleMcpToolResponse {
+	name: string;
+	tool: string;
+	enabled: boolean;
+	disabledTools: string[];
+}
+
+/** Flat per-server entry as persisted in `~/.omp/agent/mcp.json`. */
+export interface McpServerEntry {
+	type?: "stdio" | "http";
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+	headers?: Record<string, string>;
+	timeout?: number;
+	enabled?: boolean;
+	disabledTools?: string[];
+}
+
+/** Response body for `GET /api/discovery/search`. */
+export interface DiscoverySearchResponse {
+	hits: DiscoveryHit[];
+	providersUsed: string[];
+	cacheHits: number;
+	tookMs: number;
+}
+
+/** Response body for `GET /api/mcp/health`. */
+export interface McpHealthResponse {
+	status: McpHealthStatus[];
+	probedAt: string;
+}
+
+/** Response body for `POST /api/marketplace/install/dry-run`. */
+export interface DryRunInstallResponse {
+	ok: boolean;
+	manifest: {
+		name: string;
+		version?: string;
+		entrypoints: {
+			commands?: string[];
+			agents?: string[];
+			hooks?: string[];
+			mcpServers?: string[];
+			lspServers?: string[];
+		};
+	};
+	cloneUrl: string;
+	ref?: string;
+	sha?: string;
+	wouldCacheTo: string;
+}
+
+/** Body for `POST /api/marketplace/install/dry-run`. Same shape as install. */
+export interface DryRunInstallRequest {
+	name: string;
+	marketplace: string;
+	scope?: "user" | "project";
+}
+
+/** Response body for `POST /api/marketplace/install` after §1 error translation. */
+export interface InstallPluginErrorResponse {
+	error:
+		| "marketplace_not_found"
+		| "plugin_not_found"
+		| "already_installed"
+		| "git_clone_failed"
+		| "ssl_ca_failed"
+		| "unsupported_source"
+		| "install_failed";
+	message: string;
+	hint?: string;
+	marketplace?: string;
+	name?: string;
+	url?: string;
+	cause?: string;
+	at?: "resolve_source" | "version_resolve" | "cache_plugin" | "registry_write";
+}
+export interface ListAgentBackupsResponse {
+	backups: AgentConfigBackup[];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Persistent Gholam chat (§1 of docs/GENERATIVE.md)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Cost telemetry accumulating over a single chat. `costMicrocents` is USD
+ *  micro-cents — 1 cent = 1_000_000 micro-cents, $1 = 100_000_000. Matches
+ *  the unit used by the routines runner's `total_llm_cost_micros` column. */
+export interface ChatUsage {
+	tokensIn: number;
+	tokensOut: number;
+	costMicrocents: number;
+}
+
+/** Lifecycle states for a `GholamChat`. `running`/`paused`/`completed`/
+ *  `failed` mirror the SDK session lifecycle; `awaiting_user` and
+ *  `awaiting_tool` are deck-only values emitted when the runtime loop
+ *  hands control back to the surface. */
+export type GholamChatState =
+	| "running"
+	| "paused"
+	| "awaiting_user"
+	| "awaiting_tool"
+	| "completed"
+	| "failed";
+
+/** Origin of the chat. `user` = new chat view; `auto` = spawned by a
+ *  background pump; `priority` = mirror of a GholamPriority entry. */
+export type GholamChatKind = "user" | "auto" | "priority";
+
+/** One persisted chat row. `usage` is cumulative across every assistant
+ *  message in the chat (cheap to read on render, single-row aggregate). */
+export interface GholamChat {
+	id: string;
+	title: string;
+	kind: GholamChatKind;
+	cwd: string;
+	model?: string;
+	state: GholamChatState;
+	summary?: string;
+	priorityId?: string;
+	/** Selected `(modelId, role)` the user picked in the composer. Decoupled
+	 *  from `model` so the role travels alongside any picked model ref. */
+	modelUsed?: GholamChatModelUsed;
+	usage: ChatUsage;
+	createdAt: string;
+	updatedAt: string;
+	deletedAt?: string;
+}
+
+/** Role of a single append-only chat message. `tool_call` carries the
+ *  requested sidecar invocation as JSON; `tool_result` carries the reply. */
+export type GholamChatMessageRole =
+	| "user"
+	| "assistant"
+	| "tool_call"
+	| "tool_result"
+	| "system"
+	| "note";
+
+/** Wire shape of one chat message. `meta` is persisted as JSON
+ *  (`gholam_chat_messages.meta_json`); the runtime loop stashes LLM
+ *  usage, sidecar ids, and errors here so a replay is self-contained. */
+export interface GholamChatMessageWire {
+	id: string;
+	chatId: string;
+	seq: number;
+	role: GholamChatMessageRole;
+	content: string;
+	meta?: {
+		model?: string;
+		tool?: string;
+		toolCallId?: string;
+		requiredPermissions?: string[];
+		usage?: ChatUsage;
+		error?: string;
+		[key: string]: unknown;
+	};
+	createdAt: string;
+}
+
+/** Server-internal projection of `GholamChatMessageWire`. Identical
+ *  shape today; aliased so the storage/service layer has its own name
+ *  without inflating the wire-side interface. New optional metadata
+ *  fields added here are also accepted on the wire (TS structural
+ *  compatibility is one-way here). */
+export type GholamChatMessage = GholamChatMessageWire;
+
+export interface ListGholamChatsResponse {
+	chats: GholamChat[];
+}
+
+export interface ListGholamChatMessagesResponse {
+	messages: GholamChatMessage[];
+}
+
+export interface CreateGholamChatRequest {
+	cwd: string;
+	prompt: string;
+	model?: string;
+	title?: string;
+	kind?: GholamChatKind;
+	priorityId?: string;
+}
+
+export interface CreateGholamChatMessageRequest {
+	content: string;
+	/** Optional per-turn model ref override (provider/model id). */
+	modelId?: string;
+	/** Optional per-turn role override (e.g. `smol`, `slow`). */
+	role?: GholamChatModelRole;
+}
+
+export interface RestartGholamChatRequest {
+	prompt: string;
+}
+
+/** OMP harness model roles the chat composer exposes. Mirrors the role ids the
+ *  harness advertises (`default`, `smol`, `slow`, `vision`, `plan`, `commit`,
+ *  `tiny`, `advisor`). */
+export type GholamChatModelRole =
+	| "default"
+	| "smol"
+	| "slow"
+	| "vision"
+	| "plan"
+	| "commit"
+	| "tiny"
+	| "advisor";
+
+/** Persisted `(modelId, role)` selection for a chat. */
+export interface GholamChatModelUsed {
+	modelId: string;
+	role: GholamChatModelRole;
+}
+
+/** Body of `PUT /api/gholam/chats/:id/model`. */
+export interface UpdateGholamChatModelRequest {
+	modelId: string;
+	role: GholamChatModelRole;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Managed repos + worktrees (Claude-Code-style "pick a repo, open a worktree")
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One cloned GitHub repo managed under `~/omp-repos/<owner>/<repo>.git`. */
+export interface RepoEntry {
+	owner: string;
+	repo: string;
+	cloneUrl: string;
+	clonePath: string;
+	defaultBranch: string;
+	/** Local branch refs (capped). */
+	branches: string[];
+	/** Worktrees currently attached to this repo. */
+	worktrees: WorktreeEntry[];
+	lastClonedAt: string;
+}
+
+/** Body of `POST /api/repos`. `token` overrides the global GitHub token for this clone. */
+export interface CreateRepoRequest {
+	owner: string;
+	repo: string;
+	token?: string;
+}
+
+export interface ListReposResponse {
+	repos: RepoEntry[];
+}
+
+export interface CreateRepoResponse {
+	repo: RepoEntry;
+}
+
+/** One git worktree attached to a managed repo. Lives at
+ *  `~/omp-repos/<owner>/<repo>.worktrees/<branch>`. */
+export interface WorktreeEntry {
+	owner: string;
+	repo: string;
+	branch: string;
+	path: string;
+	/** True iff this worktree matches the bare clone's currently checked-out branch. */
+	isCurrent: boolean;
+	createdAt: string;
+	/** Number of sessions currently bound to this worktree path. */
+	sessionCount?: number;
+}
+
+/** Body of `POST /api/repos/:owner/:repo/worktrees`. */
+export interface CreateWorktreeRequest {
+	branch: string;
+	/** Base ref for a new branch. Defaults to the repo's HEAD when omitted. */
+	base?: string;
+}
+
+export interface ListWorktreesResponse {
+	worktrees: WorktreeEntry[];
+}
+
+export interface CreateWorktreeResponse {
+	worktree: WorktreeEntry;
+}
+
+/** Response body for `GET /api/sessions/grouped`. Buckets are emitted in
+ *  insertion order of the matched sessions. Empty buckets are omitted. */
+export interface GroupedSessionsResponse {
+	groups: Array<{ key: string; sessions: SessionSummary[] }>;
+}
+/**
+ * Full AI metadata bag returned by `POST /api/sessions/:id/regenerate-meta`.
+ * Combines AI-computed title/tags/summary with the three deck-managed dials
+ * (urgency/importance/status) so a single call can hydrate the entire row.
+ * The server does NOT persist the dial fields from this path — they live
+ * on the existing `session` row and are written via `PATCH /api/sessions/:id/meta`.
+ */
+export interface AiMeta {
+	/** AI-composed title; ≤60 chars. */
+	title: string;
+	/** AI-composed tags; 0..5 short tokens. */
+	tags: string[];
+	/** AI-suggested urgency. */
+	urgency: SessionUrgency;
+	/** AI-suggested importance. */
+	importance: SessionImportance;
+	/** AI-suggested status. */
+	status: SessionStatus;
+	/** AI-summarised one-sentence description; ≤200 chars. */
+	summary: string;
+}
+
+/** Body of `POST /api/sessions/:id/regenerate-meta`. */
+export interface RegenerateMetaRequest {
+	/** Bypass the server-side cache and force a fresh LLM call. */
+	force?: boolean;
+	/** Override the default cheap model for this call (e.g. "minimax/MiniMax-M3"). */
+	model?: string;
+}
+
+/** Response body of `POST /api/sessions/:id/regenerate-meta`. */
+export interface RegenerateMetaResponse {
+	ok: true;
+	meta: AiMeta;
+}
+
+/**
+ * Body of `PATCH /api/sessions/:id/meta`. Any subset of fields; unspecified
+ * fields are left unchanged. At least one field must be supplied.
+ */
+export interface PatchSessionMetaRequest {
+	archived?: boolean;
+	urgency?: SessionUrgency;
+	importance?: SessionImportance;
+	status?: SessionStatus;
+}
+
+/** Response body of `PATCH /api/sessions/:id/meta`. Echoes the resulting row. */
+export interface PatchSessionMetaResponse {
+	ok: true;
+	meta: SessionSummary;
 }

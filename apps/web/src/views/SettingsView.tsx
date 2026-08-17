@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Play, RotateCcw, Save, Square, X } from "lucide-react";
+import { Check, Copy, Play, QrCode as QrIcon, RotateCcw, Save, Square, X } from "lucide-react";
 import type {
 	BridgeInfo,
 	BridgeName,
@@ -23,13 +23,21 @@ import { bridgesApi } from "@/lib/bridges-api";
 import { settingsApi } from "@/lib/settings-api";
 import { orientationApi } from "@/lib/orientation-api";
 import { authApi } from "@/lib/auth-api";
+import { type AuthError, type AuthStatus, deckAuthApi } from "@/lib/deck-auth-api";
+import { attachApi, type AttachHistoryEntry } from "@/lib/attach-api";
+import { SessionAttachQR } from "@/components/SessionAttachQR";
+import { RichEditor } from "@/components/RichEditor";
+import { CopyButton } from "@/lib/CopyButton";
 import { playNotificationTone } from "@/lib/audio";
 import { useNotificationPermission } from "@/lib/notifications";
+import { useInstallPrompt, usePushSubscription } from "@/lib/pwa";
 import { useStore, type NotificationItem } from "@/lib/store";
 import { THEMES, useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 const SECTIONS = [
+	{ id: "account", label: "Account", description: "Your sign-in, password and devices" },
+	{ id: "remote-access", label: "Remote Access", description: "How your phone reaches this deck" },
 	{ id: "env", label: "Env", description: "Process and deck-managed variables" },
 	{ id: "providers", label: "Providers", description: "OAuth sign-in and API-key state" },
 	{ id: "messaging", label: "Messaging", description: "Telegram and future chat bridges" },
@@ -82,7 +90,11 @@ export function SettingsView() {
 							))}
 						</nav>
 						<section className="min-h-0 overflow-auto p-4">
-							{selected === "env" ? (
+							{selected === "account" ? (
+								<AccountSection />
+							) : selected === "remote-access" ? (
+								<RemoteAccessSection />
+							) : selected === "env" ? (
 								<EnvSection />
 							) : selected === "providers" ? (
 								<ProvidersSection />
@@ -754,6 +766,8 @@ function NotificationsSection() {
 				</p>
 			</div>
 
+			<MobileAppCard />
+
 			<PermissionCard
 				permission={permission}
 				onRequest={() => void requestPermission()}
@@ -786,6 +800,100 @@ function NotificationsSection() {
 				items={recent}
 				onDismiss={(id) => dismissNotification(id)}
 			/>
+		</div>
+	);
+}
+
+/**
+ * "Code from your phone." Two independent capabilities, one card: installing
+ * the deck as a standalone app (no browser chrome, its own icon, launches
+ * full-screen) and push notifications that reach it even when it's closed
+ * or backgrounded — the thing a foreground-only browser Notification can't
+ * do, which is the whole point of pairing the two here rather than putting
+ * push in a generic "notifications" list.
+ */
+function MobileAppCard() {
+	const install = useInstallPrompt();
+	const push = usePushSubscription();
+	const [installResult, setInstallResult] = useState<string | null>(null);
+	const [testResult, setTestResult] = useState<string | null>(null);
+
+	async function handleInstall(): Promise<void> {
+		const outcome = await install.promptInstall();
+		if (outcome === "accepted") setInstallResult("Installed. Look for omp-deck on your home screen or app list.");
+		else if (outcome === "dismissed") setInstallResult(null);
+	}
+
+	async function handleTest(): Promise<void> {
+		try {
+			setTestResult(await push.sendTest());
+		} catch (err) {
+			setTestResult(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	return (
+		<div className="row space-y-3 pb-4">
+			<div>
+				<div className="text-sm font-medium">Mobile & push</div>
+				<p className="mt-0.5 text-xs text-ink-3">
+					Install omp-deck as an app and get pushed when a session needs you — even with the tab closed.
+				</p>
+			</div>
+
+			<div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper-2 px-3 py-2.5">
+				<div className="min-w-0">
+					<div className="text-xs font-medium text-ink">Install as app</div>
+					<div className="mt-0.5 text-2xs text-ink-3">
+						{install.installed
+							? "Already running as an installed app."
+							: install.needsManualIosInstructions
+								? "Safari: Share → Add to Home Screen."
+								: install.available
+									? "Adds an icon, launches full-screen, no browser chrome."
+									: "Not offered by this browser yet — visit again after using the app a bit, or check for a browser menu install option."}
+					</div>
+					{installResult ? <div className="mt-1 text-2xs text-success">{installResult}</div> : null}
+				</div>
+				{!install.installed && install.available ? (
+					<Button variant="primary" size="sm" onClick={() => void handleInstall()}>
+						Install
+					</Button>
+				) : null}
+			</div>
+
+			<div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper-2 px-3 py-2.5">
+				<div className="min-w-0">
+					<div className="text-xs font-medium text-ink">Push notifications</div>
+					<div className="mt-0.5 text-2xs text-ink-3">
+						{push.state === "unsupported"
+							? "Not supported by this browser."
+							: push.state === "subscribed"
+								? "Enabled on this device."
+								: "Reach this device even when the tab is closed."}
+					</div>
+					{push.error ? <div className="mt-1 text-2xs text-danger">{push.error}</div> : null}
+					{testResult ? <div className="mt-1 text-2xs text-ink-3">{testResult}</div> : null}
+				</div>
+				{push.state !== "unsupported" ? (
+					<div className="flex shrink-0 gap-1.5">
+						{push.state === "subscribed" ? (
+							<>
+								<Button variant="ghost" size="sm" disabled={push.busy} onClick={() => void handleTest()}>
+									Test
+								</Button>
+								<Button variant="outline" size="sm" disabled={push.busy} onClick={() => void push.unsubscribe()}>
+									Disable
+								</Button>
+							</>
+						) : (
+							<Button variant="primary" size="sm" disabled={push.busy} onClick={() => void push.subscribe()}>
+								Enable
+							</Button>
+						)}
+					</div>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -1253,10 +1361,10 @@ function PreludeCard() {
 					<div className="text-sm text-ink-3">Loading...</div>
 				) : (
 					<>
-						<textarea
+						<RichEditor
 							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							spellCheck={false}
+							onChange={(v) => setDraft(v)}
+							disableRichText
 							className="block min-h-[320px] w-full resize-y rounded-md border border-line bg-paper-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink"
 						/>
 						<div className="flex flex-wrap items-center gap-2">
@@ -1374,10 +1482,10 @@ function StartCommandCard() {
 						</label>
 						<label className="block space-y-1">
 							<span className="meta">body</span>
-							<textarea
+							<RichEditor
 								value={body}
-								onChange={(e) => setBody(e.target.value)}
-								spellCheck={false}
+								onChange={(v) => setBody(v)}
+								disableRichText
 								className="block min-h-[280px] w-full resize-y rounded-md border border-line bg-paper-2 px-3 py-2 font-mono text-xs leading-relaxed text-ink"
 							/>
 						</label>
@@ -1637,7 +1745,185 @@ function GateKnobInput({
 	);
 }
 
-function StubSection({ section }: { section: Exclude<SectionId, "env" | "messaging" | "appearance" | "notifications"> }) {
+type AccessMode = "direct" | "tunnel" | "history";
+
+function RemoteAccessSection() {
+	const [mode, setMode] = useState<AccessMode>("direct");
+	const [history, setHistory] = useState<AttachHistoryEntry[]>([]);
+	const [historyLoading, setHistoryLoading] = useState(false);
+	const [historyError, setHistoryError] = useState<string | undefined>();
+	const [qrFor, setQrFor] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (mode !== "history") return;
+		setHistoryLoading(true);
+		setHistoryError(undefined);
+		attachApi
+			.getAttachHistory()
+			.then((resp) => setHistory(resp.entries))
+			.catch((e: unknown) => setHistoryError(e instanceof Error ? e.message : String(e)))
+			.finally(() => setHistoryLoading(false));
+	}, [mode]);
+
+	const cloudflaredCmd = "cloudflared tunnel --url http://localhost:3000";
+
+	return (
+		<div className="mx-auto max-w-3xl space-y-4">
+			<div>
+				<h1 className="text-xl font-semibold tracking-tight">Remote Access</h1>
+				<p className="mt-1 max-w-3xl text-sm text-ink-3">
+					Pick how your phone reaches this deck. Switch modes any time; settings are saved per
+					device.
+				</p>
+			</div>
+
+			<div className="grid gap-3">
+				<AccessModeCard
+					id="direct"
+					mode={mode}
+					setMode={setMode}
+					title="Direct (loopback + Tailscale)"
+					description="Connect directly via your local IP or Tailscale domain. No public exposure; fastest and safest when both devices are on the same network or Tailscale tailnet."
+					default
+				/>
+				<AccessModeCard
+					id="tunnel"
+					mode={mode}
+					setMode={setMode}
+					title="Cloudflare Tunnel"
+					description="Run cloudflared on the host machine. The deck stays unexposed; Cloudflare handles TLS and routing."
+					footer={
+						<div className="flex items-center gap-2 rounded-md border border-line bg-paper-2 px-2 py-1.5">
+							<code className="flex-1 truncate font-mono text-xs">{cloudflaredCmd}</code>
+							<CopyButton text={cloudflaredCmd} />
+						</div>
+					}
+				/>
+				<AccessModeCard
+					id="history"
+					mode={mode}
+					setMode={setMode}
+					title="Join Links History"
+					description="Recent attach URLs you've minted. Scan a QR from a previous session to rejoin quickly."
+					footer={
+						<JoinLinksHistory
+							entries={history}
+							loading={historyLoading}
+							error={historyError}
+							onOpenQr={(sessionId) => setQrFor(sessionId)}
+						/>
+					}
+				/>
+			</div>
+
+			{qrFor ? (
+				<SessionAttachQR
+					sessionId={qrFor}
+					open={true}
+					onClose={() => setQrFor(null)}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+function AccessModeCard({
+	id,
+	mode,
+	setMode,
+	title,
+	description,
+	footer,
+	default: isDefault,
+}: {
+	id: AccessMode;
+	mode: AccessMode;
+	setMode: (m: AccessMode) => void;
+	title: string;
+	description: string;
+	footer?: ReactNode;
+	default?: boolean;
+}) {
+	const selected = mode === id;
+	return (
+		<label
+			className={cn(
+				"block cursor-pointer rounded-md border bg-paper-2 p-3 transition-colors",
+				selected ? "border-accent ring-1 ring-accent/30" : "border-line hover:border-ink-3",
+			)}
+		>
+			<div className="flex items-start gap-3">
+				<input
+					type="radio"
+					name="access-mode"
+					value={id}
+					checked={selected}
+					onChange={() => setMode(id)}
+					className="mt-1 h-3.5 w-3.5 accent-accent"
+				/>
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-2">
+						<div className="font-mono text-xs font-medium uppercase tracking-meta">
+							{title}
+						</div>
+						{isDefault ? <Badge tone="accent">default</Badge> : null}
+					</div>
+					<p className="mt-1 text-sm text-ink-3">{description}</p>
+					{footer && selected ? <div className="mt-3">{footer}</div> : null}
+				</div>
+			</div>
+		</label>
+	);
+}
+
+function JoinLinksHistory({
+	entries,
+	loading,
+	error,
+	onOpenQr,
+}: {
+	entries: AttachHistoryEntry[];
+	loading: boolean;
+	error: string | undefined;
+	onOpenQr: (sessionId: string) => void;
+}) {
+	if (loading) return <div className="text-sm text-ink-3">Loading history...</div>;
+	if (error) {
+		return (
+			<div className="rounded-md border border-danger/30 bg-danger/10 px-2 py-1.5 font-mono text-2xs text-danger">
+				{error}
+			</div>
+		);
+	}
+	if (entries.length === 0) {
+		return (
+			<div className="rounded-md border border-dashed border-line bg-paper-2 px-2 py-1.5 text-xs text-ink-3">
+				No join links yet. Mint one from a running session to see it here.
+			</div>
+		);
+	}
+	return (
+		<ul className="divide-y divide-line rounded-md border border-line bg-paper-2">
+			{entries.map((entry) => (
+				<li key={entry.token} className="flex items-center gap-2 px-2 py-1.5">
+					<div className="min-w-0 flex-1">
+						<div className="truncate font-mono text-xs">{entry.url}</div>
+						<div className="text-2xs text-ink-3">
+							{new Date(entry.createdAt).toLocaleString()} · {entry.sessionId.slice(0, 8)}
+						</div>
+					</div>
+					<CopyButton text={entry.url} />
+					<Button variant="outline" size="sm" onClick={() => onOpenQr(entry.sessionId)}>
+						<QrIcon className="h-3.5 w-3.5" />
+						QR
+					</Button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function StubSection({ section }: { section: Exclude<SectionId, "env" | "messaging" | "appearance" | "notifications" | "remote-access"> }) {
 	const spec = SECTIONS.find((s) => s.id === section)!;
 	return (
 		<div className="mx-auto max-w-3xl rounded-md border border-dashed border-line bg-paper-2 p-6">
@@ -1716,6 +2002,150 @@ function formatUptime(startedIso: string): string {
  * fires `models_changed` server-side so the picker re-empties without a
  * deck restart. See docs/oauth-deck-sdk-findings.md for the SDK contract.
  */
+/**
+ * Your deck account: who you're signed in as, how to change the password, and
+ * how to leave.
+ *
+ * On a deck with authentication disabled (the loopback-only case) this becomes
+ * an explanation of why there is nothing to configure, rather than a form that
+ * cannot do anything — the difference between "not applicable" and "broken" is
+ * worth the extra branch.
+ */
+function AccountSection() {
+	const [status, setStatus] = useState<AuthStatus | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [current, setCurrent] = useState("");
+	const [next, setNext] = useState("");
+	const [confirm, setConfirm] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+
+	async function refresh(): Promise<void> {
+		setLoading(true);
+		try {
+			setStatus(await deckAuthApi.status());
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	useEffect(() => {
+		void refresh();
+	}, []);
+
+	async function changePassword(e: React.FormEvent): Promise<void> {
+		e.preventDefault();
+		setError(null);
+		setNotice(null);
+		if (next !== confirm) {
+			setError("The two new passwords don't match.");
+			return;
+		}
+		setBusy(true);
+		try {
+			await deckAuthApi.changePassword(current, next);
+			setCurrent("");
+			setNext("");
+			setConfirm("");
+			setNotice("Password changed. Every other signed-in device has been signed out.");
+		} catch (err) {
+			setError((err as AuthError).message || "Could not change the password.");
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function signOut(): Promise<void> {
+		await deckAuthApi.logout().catch(() => undefined);
+		// Full reload rather than a router navigation: it tears down the
+		// WebSocket and every cached store slice, so nothing from the old
+		// session lingers in memory behind the login screen.
+		window.location.reload();
+	}
+
+	if (loading) return <div className="font-mono text-2xs text-ink-3">Loading …</div>;
+
+	if (status && !status.authRequired) {
+		return (
+			<div className="flex flex-col gap-3">
+				<div className="meta">Account</div>
+				<p className="max-w-prose text-sm text-ink-2">
+					Authentication is off. The deck only does that when it is bound to loopback and no password is
+					configured, so the only thing that can reach it is this machine.
+				</p>
+				<p className="max-w-prose text-sm text-ink-2">
+					Publishing it on a hostname turns authentication on automatically. To require a password here too,
+					set <code>OMP_DECK_AUTH_MODE=on</code> and <code>OMP_DECK_AUTH_PASSWORD</code>, then restart.
+				</p>
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex max-w-md flex-col gap-5">
+			<div className="flex flex-col gap-2">
+				<div className="meta">Signed in as</div>
+				<div className="row items-center justify-between">
+					<span className="font-mono text-sm text-ink">{status?.user?.username ?? "unknown"}</span>
+					<Button variant="outline" onClick={() => void signOut()}>
+						Sign out
+					</Button>
+				</div>
+			</div>
+
+			<form onSubmit={changePassword} className="flex flex-col gap-3">
+				<div className="meta">Change password</div>
+				<label className="block">
+					<div className="meta mb-1">Current password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="current-password"
+						value={current}
+						onChange={(e) => setCurrent(e.target.value)}
+						required
+					/>
+				</label>
+				<label className="block">
+					<div className="meta mb-1">New password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="new-password"
+						minLength={8}
+						value={next}
+						onChange={(e) => setNext(e.target.value)}
+						required
+					/>
+				</label>
+				<label className="block">
+					<div className="meta mb-1">Confirm new password</div>
+					<input
+						className="field h-9 w-full px-2 text-sm"
+						type="password"
+						autoComplete="new-password"
+						value={confirm}
+						onChange={(e) => setConfirm(e.target.value)}
+						required
+					/>
+				</label>
+				{error ? (
+					<div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 font-mono text-xs text-danger">
+						{error}
+					</div>
+				) : null}
+				{notice ? <div className="text-xs text-ink-2">{notice}</div> : null}
+				<Button type="submit" variant="primary" disabled={busy} className="self-start">
+					{busy ? "Saving…" : "Change password"}
+				</Button>
+			</form>
+		</div>
+	);
+}
+
 function ProvidersSection() {
 	const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
 	const [error, setError] = useState<string | undefined>();

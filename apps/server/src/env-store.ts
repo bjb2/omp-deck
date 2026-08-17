@@ -171,17 +171,40 @@ function quoteEnvValue(value: string): string {
 	if (/^[A-Za-z0-9_./:@,+-]+$/.test(value)) return value;
 	return JSON.stringify(value);
 }
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
+/**
+ * Durability contract for every user-writable disk surface in the deck.
+ * Writes go to `<filePath>.<pid>.<ts>.tmp` in the same directory, are
+ * fsync'd before the rename, then atomically renamed onto the target path.
+ * On any failure the partial tmp file is best-effort removed and the
+ * original error rethrown — callers see a clean rejection with no
+ * half-written file left behind. Single-drive assumption (rename across
+ * drives would fail); the kb-cockpit-proposal decision 4 docblock in
+ * `kb-service.ts` captures the v1 rationale.
+ */
+export async function atomicWriteSync(filePath: string, data: string | Uint8Array): Promise<void> {
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-	const tmp = `${filePath}.pending-${process.pid}-${Date.now()}`;
+	const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 	const handle = await fs.promises.open(tmp, "w", 0o600);
 	try {
-		await handle.writeFile(content, "utf8");
+		await handle.writeFile(data);
 		await handle.sync();
-	} finally {
-		await handle.close();
+	} catch (err) {
+		await handle.close().catch(() => {});
+		await fs.promises.rm(tmp, { force: true }).catch(() => {});
+		throw err;
 	}
+	await handle.close();
 	if (process.platform !== "win32") await fs.promises.chmod(tmp, 0o600);
-	await fs.promises.rename(tmp, filePath);
+	try {
+		await fs.promises.rename(tmp, filePath);
+	} catch (err) {
+		await fs.promises.rm(tmp, { force: true }).catch(() => {});
+		throw err;
+	}
+}
+
+/** Back-compat shim: keep the original `atomicWrite` wrapper so the existing
+ *  caller in this file continues to compile after the helper extraction. */
+async function atomicWrite(filePath: string, content: string): Promise<void> {
+	await atomicWriteSync(filePath, content);
 }

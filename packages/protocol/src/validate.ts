@@ -8,7 +8,7 @@
  * `$ref`-resolves against that namespace.
  */
 
-import Ajv2020, { type ErrorObject } from "ajv/dist/2020";
+import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 
 import routineSpecSchema from "./schemas/routine-spec.json";
@@ -114,7 +114,7 @@ export function validateRoutineSpec(spec: unknown): ValidationResult {
 	const valid = validate(spec);
 	if (!valid) {
 		// Cast: Ajv attaches `.errors` to the compiled validator function.
-		const errors = (validate as unknown as { errors?: ErrorObject[] | null }).errors;
+		const errors = (validate as ValidateFunction).errors;
 		return { valid: false, errors: normalizeErrors(errors) };
 	}
 
