@@ -8,6 +8,7 @@
 		"dev": "bun --hot src/index.ts",
 		"start": "bun src/index.ts",
 		"build": "bun build src/index.ts --target=bun --outdir=dist --minify --external omp-legacy-pi-modules",
+		"postbuild": "bun ../../scripts/copy-native.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test"
 	},

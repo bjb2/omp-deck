@@ -16,6 +16,7 @@ dist
 # Build artifacts
 apps/*/dist
 apps/web/dist-server
+apps/*/native
 .next
 
 # Drizzle Kit generated output (migrations + meta snapshots).
